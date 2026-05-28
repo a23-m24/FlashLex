@@ -7,6 +7,8 @@ import ru.isu.backend.model.Difficulty;
 import ru.isu.backend.model.PhraseType;
 
 public record FlashcardRequest(
+        Long id,
+
         @NotBlank
         @Size(max = 180)
         String englishWord,

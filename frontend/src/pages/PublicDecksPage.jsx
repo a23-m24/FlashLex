@@ -25,9 +25,22 @@ export function PublicDecksPage() {
     level: '',
     sort: 'rating',
   })
-  const publicDecks = decks.filter((deck) => deck.isPublished)
-  const tags = [...new Set(publicDecks.flatMap((deck) => deck.tags || []))]
-  const levels = [...new Set(publicDecks.map((deck) => deck.level))]
+  const publicDecks = useMemo(
+    () => decks.filter((deck) => deck.isPublished),
+    [decks],
+  )
+  const myDecks = useMemo(
+    () => decks.filter((deck) => deck.authorId === user.id),
+    [decks, user.id],
+  )
+  const tags = useMemo(
+    () => [...new Set(publicDecks.flatMap((deck) => deck.tags || []))],
+    [publicDecks],
+  )
+  const levels = useMemo(
+    () => [...new Set(publicDecks.map((deck) => deck.level))],
+    [publicDecks],
+  )
 
   const filteredDecks = useMemo(() => {
     const query = filters.query.toLowerCase().trim()
@@ -89,6 +102,7 @@ export function PublicDecksPage() {
                 key={deck.id}
                 onClone={handleClone}
                 onPublish={publishDeck}
+                ownedCloneId={myDecks.find((item) => item.sourceDeckId === deck.id)?.id}
                 showStudyAction={false}
               />
             ))}

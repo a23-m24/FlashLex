@@ -7,7 +7,6 @@ import {
   normalizeDeck,
   normalizeDeckCollection,
   normalizeLeaderboardRow,
-  normalizeLearningStats,
   normalizeProgress,
   normalizeTrainingNext,
   normalizeUser,
@@ -25,14 +24,18 @@ const emptyDailyStats = () => ({
   streakDays: 0,
 })
 
+const isReviewDueToday = (progress) =>
+  progress?.status === 'REVIEW' &&
+  String(progress.nextReviewDate || progress.nextReviewAt || '').slice(0, 10) <= getTodayIso()
+
 const initialState = {
   user: null,
   decks: [],
   flashcards: [],
   progress: [],
   dailyStats: emptyDailyStats(),
+  dailyStatsHistory: [],
   leaderboard: [],
-  learningStats: null,
   isLoading: true,
   error: null,
 }
@@ -47,6 +50,25 @@ const replaceDeckCards = (flashcards, deckId, cards) => [
   ...cards,
 ]
 
+const mergeRatedDeck = (decks, deck) => {
+  const hasDeck = decks.some((item) => item.id === deck.id)
+  const mergedDecks = decks.map((item) => {
+    if (item.id === deck.id) {
+      return deck
+    }
+    if (item.id === deck.ratingTargetId) {
+      return {
+        ...item,
+        rating: deck.rating,
+        ratingsCount: deck.ratingsCount,
+        userRating: deck.userRating,
+      }
+    }
+    return item
+  })
+  return hasDeck ? mergedDecks : [deck, ...mergedDecks]
+}
+
 const loadSessionData = async (token) => {
   const [
     user,
@@ -54,7 +76,7 @@ const loadSessionData = async (token) => {
     publicDeckPage,
     progress,
     dailyStats,
-    learningStats,
+    dailyStatsHistory,
     leaderboard,
   ] = await Promise.all([
     flashlexApi.me(token),
@@ -62,7 +84,7 @@ const loadSessionData = async (token) => {
     flashlexApi.publicDecks(),
     flashlexApi.progress(token),
     flashlexApi.dailyStats(token),
-    flashlexApi.learningStats(token),
+    flashlexApi.dailyStatsHistory(7, token),
     flashlexApi.leaderboard(),
   ])
 
@@ -75,7 +97,7 @@ const loadSessionData = async (token) => {
     flashcards,
     progress: progress.map(normalizeProgress),
     dailyStats: normalizeDailyStats(dailyStats),
-    learningStats: normalizeLearningStats(learningStats),
+    dailyStatsHistory: dailyStatsHistory.map(normalizeDailyStats),
     leaderboard: leaderboard.map(normalizeLeaderboardRow),
     isLoading: false,
     error: null,
@@ -201,36 +223,42 @@ export function FlashLexProvider({ children }) {
         const { deck, cards } = normalizeDeckWithCards(
           await flashlexApi.updateDeck(deckId, payload),
         )
-        setState((current) => ({
-          ...current,
-          decks: mergeDeck(current.decks, deck),
-          flashcards: replaceDeckCards(current.flashcards, deck.id, cards),
-          progress: current.progress.filter((item) => {
-            const previousDeckCardIds = current.flashcards
+        setState((current) => {
+          const previousDeckCardIds = new Set(
+            current.flashcards
               .filter((card) => card.deckId === deck.id)
-              .map((card) => card.id)
-            const nextDeckCardIds = cards.map((card) => card.id)
-            return (
-              !previousDeckCardIds.includes(item.flashcardId) ||
-              nextDeckCardIds.includes(item.flashcardId)
-            )
-          }),
-        }))
+              .map((card) => card.id),
+          )
+          const nextDeckCardIds = new Set(cards.map((card) => card.id))
+
+          return {
+            ...current,
+            decks: mergeDeck(current.decks, deck),
+            flashcards: replaceDeckCards(current.flashcards, deck.id, cards),
+            progress: current.progress.filter((item) =>
+                !previousDeckCardIds.has(item.flashcardId) ||
+                nextDeckCardIds.has(item.flashcardId),
+            ),
+          }
+        })
       },
 
       async deleteDeck(deckId) {
         await flashlexApi.deleteDeck(deckId)
-        setState((current) => ({
-          ...current,
-          decks: current.decks.filter((deck) => deck.id !== deckId),
-          flashcards: current.flashcards.filter((card) => card.deckId !== deckId),
-          progress: current.progress.filter((item) => {
-            const card = current.flashcards.find(
-              (flashcard) => flashcard.id === item.flashcardId,
-            )
-            return !card || card.deckId !== deckId
-          }),
-        }))
+        setState((current) => {
+          const deletedCardIds = new Set(
+            current.flashcards
+              .filter((card) => card.deckId === deckId)
+              .map((card) => card.id),
+          )
+
+          return {
+            ...current,
+            decks: current.decks.filter((deck) => deck.id !== deckId),
+            flashcards: current.flashcards.filter((card) => card.deckId !== deckId),
+            progress: current.progress.filter((item) => !deletedCardIds.has(item.flashcardId)),
+          }
+        })
       },
 
       async publishDeck(deckId) {
@@ -246,34 +274,78 @@ export function FlashLexProvider({ children }) {
         const { deck, cards } = normalizeDeckWithCards(await flashlexApi.cloneDeck(deckId))
         setState((current) => ({
           ...current,
-          decks: mergeDeck(current.decks, deck),
+          decks: mergeDeck(current.decks, deck).map((item) => {
+            const wasAlreadyLoaded = current.decks.some((currentDeck) => currentDeck.id === deck.id)
+            if (!wasAlreadyLoaded && item.id === deck.sourceDeckId) {
+              return { ...item, clones: item.clones + 1 }
+            }
+            return item
+          }),
           flashcards: replaceDeckCards(current.flashcards, deck.id, cards),
         }))
         return deck.id
       },
 
+      async rateDeck(deckId, value) {
+        const { deck, cards } = normalizeDeckWithCards(await flashlexApi.rateDeck(deckId, value))
+        setState((current) => ({
+          ...current,
+          decks: mergeRatedDeck(current.decks, deck),
+          flashcards: replaceDeckCards(current.flashcards, deck.id, cards),
+        }))
+      },
+
+      async removeDeckRating(deckId) {
+        const { deck, cards } = normalizeDeckWithCards(await flashlexApi.removeDeckRating(deckId))
+        setState((current) => ({
+          ...current,
+          decks: mergeRatedDeck(current.decks, deck),
+          flashcards: replaceDeckCards(current.flashcards, deck.id, cards),
+        }))
+      },
+
       async answerCard(cardId, quality) {
         const updatedProgress = normalizeProgress(await flashlexApi.answerCard(cardId, quality))
-        const [dailyStats, leaderboard] = await Promise.all([
-          flashlexApi.dailyStats(),
-          flashlexApi.leaderboard(),
-        ])
-
         setState((current) => ({
           ...current,
           progress: [
             updatedProgress,
             ...current.progress.filter((item) => item.flashcardId !== updatedProgress.flashcardId),
           ],
-          dailyStats: normalizeDailyStats(dailyStats),
-          leaderboard: leaderboard.map(normalizeLeaderboardRow),
+          dailyStats: updateDailyStatsAfterAnswer(
+            current.dailyStats,
+            current.progress.find((item) => item.flashcardId === updatedProgress.flashcardId),
+            quality,
+          ),
         }))
 
         return updatedProgress
       },
 
-      async getNextTrainingCard(deckId) {
-        return normalizeTrainingNext(await flashlexApi.trainingNext(deckId))
+      async loadLeaderboard(period = 'DAY') {
+        const leaderboard = await flashlexApi.leaderboard(period)
+        setState((current) => ({
+          ...current,
+          leaderboard: leaderboard.map(normalizeLeaderboardRow),
+        }))
+      },
+
+      async getNextTrainingCard(
+        deckId,
+        queueMode = 'GOAL',
+        extraLimit = 0,
+        extraNewLimit = 0,
+        extraReviewLimit = 0,
+      ) {
+        return normalizeTrainingNext(
+          await flashlexApi.trainingNext(
+            deckId,
+            queueMode,
+            extraLimit,
+            extraNewLimit,
+            extraReviewLimit,
+          ),
+        )
       },
 
       refreshSession,
@@ -290,4 +362,18 @@ export function FlashLexProvider({ children }) {
   )
 
   return <FlashLexContext.Provider value={value}>{children}</FlashLexContext.Provider>
+}
+
+const updateDailyStatsAfterAnswer = (dailyStats, previousProgress, quality) => {
+  const wasNew = !previousProgress || previousProgress.status === 'NEW'
+  const wasReview = isReviewDueToday(previousProgress)
+  const counted = wasNew || wasReview
+  const correct = quality !== 'AGAIN_0' && counted
+
+  return {
+    ...dailyStats,
+    learned: (dailyStats.learned || 0) + (wasNew ? 1 : 0),
+    reviewed: (dailyStats.reviewed || 0) + (wasReview ? 1 : 0),
+    correct: (dailyStats.correct || 0) + (correct ? 1 : 0),
+  }
 }

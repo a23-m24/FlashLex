@@ -5,15 +5,10 @@ import { SessionSummary } from '../features/training/SessionSummary'
 import { TrainingCard } from '../features/training/TrainingCard'
 import { isDue } from '../shared/lib/date'
 import { getProgress } from '../shared/lib/metrics'
+import { isLearningStatus, isReviewStatus } from '../shared/lib/queue'
 import { Button } from '../shared/ui/Button'
 import { EmptyState } from '../shared/ui/EmptyState'
 import { LinkButton } from '../shared/ui/LinkButton'
-
-const isLearningProgress = (cardProgress) =>
-  cardProgress?.status === 'LEARNING' || cardProgress?.status === 'RELEARNING'
-
-const isReviewProgress = (cardProgress) =>
-  cardProgress?.status === 'REVIEW' || cardProgress?.status === 'GRADUATED'
 
 const reviewTime = (cardProgress) => {
   const rawValue = cardProgress?.nextReviewAt || cardProgress?.nextReviewDate
@@ -22,18 +17,54 @@ const reviewTime = (cardProgress) => {
 
 export function TrainingSessionPage() {
   const [searchParams] = useSearchParams()
+  const sessionParams = {
+    answerMode: searchParams.get('answer') || 'SELF_CHECK',
+    deckIdParam: searchParams.get('deck') || '',
+    directionMode: searchParams.get('direction') || 'DIRECT_TRANSLATION',
+    extraLimitParam: searchParams.get('extraLimit') || '0',
+    extraNewLimitParam: searchParams.get('extraNewLimit') || '0',
+    extraReviewLimitParam: searchParams.get('extraReviewLimit') || '0',
+    queueMode: searchParams.get('queue') || 'GOAL',
+  }
+  const sessionKey = Object.values(sessionParams).join('|')
+
+  return <TrainingSessionContent key={sessionKey} {...sessionParams} />
+}
+
+function TrainingSessionContent({
+  answerMode,
+  deckIdParam,
+  directionMode,
+  extraLimitParam,
+  extraNewLimitParam,
+  extraReviewLimitParam,
+  queueMode,
+}) {
   const { user, decks, flashcards, progress, answerCard, getNextTrainingCard } = useFlashLex()
   const fallbackDeck = decks.find((deck) => deck.authorId === user.id)
-  const deckId = searchParams.get('deck') || fallbackDeck?.id || ''
-  const directionMode = searchParams.get('direction') || 'DIRECT_TRANSLATION'
-  const answerMode = searchParams.get('answer') || 'SELF_CHECK'
+  const deckId = deckIdParam || fallbackDeck?.id || ''
+  const rawExtraLimit = Number(extraLimitParam)
+  const extraLimit = Number.isFinite(rawExtraLimit) ? Math.max(0, Math.floor(rawExtraLimit)) : 0
+  const rawExtraNewLimit = Number(extraNewLimitParam)
+  const rawExtraReviewLimit = Number(extraReviewLimitParam)
+  const extraNewLimit = Number.isFinite(rawExtraNewLimit)
+    ? Math.max(0, Math.floor(rawExtraNewLimit))
+    : 0
+  const extraReviewLimit = Number.isFinite(rawExtraReviewLimit)
+    ? Math.max(0, Math.floor(rawExtraReviewLimit))
+    : 0
+  const isLimitedExtraSession =
+    ((queueMode === 'EXTRA_NEW' || queueMode === 'EXTRA_REVIEW') && extraLimit > 0) ||
+    (queueMode === 'EXTRA_MIXED' && extraNewLimit + extraReviewLimit > 0)
   const deck = decks.find((item) => item.id === deckId)
-  const [results, setResults] = useState([])
   const [entry, setEntry] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isAnswering, setIsAnswering] = useState(false)
   const [answerVersion, setAnswerVersion] = useState(0)
   const [error, setError] = useState('')
+  const [extraAnswered, setExtraAnswered] = useState(0)
+  const [extraNewAnswered, setExtraNewAnswered] = useState(0)
+  const [extraReviewAnswered, setExtraReviewAnswered] = useState(0)
   const [localProgressOverrides, setLocalProgressOverrides] = useState({})
 
   const visibleProgress = useMemo(() => {
@@ -71,10 +102,10 @@ export function TrainingSessionPage() {
       if (!cardProgress) {
         newCount += 1
         newItems.push({ card, progress: null })
-      } else if (isLearningProgress(cardProgress)) {
+      } else if (isLearningStatus(cardProgress.status)) {
         learningCount += 1
         learningItems.push({ card, progress: cardProgress })
-      } else if (isReviewProgress(cardProgress) && isDue(cardProgress.nextReviewDate || cardProgress.nextReviewAt)) {
+      } else if (isReviewStatus(cardProgress.status) && isDue(cardProgress.nextReviewDate || cardProgress.nextReviewAt)) {
         reviewCount += 1
         dueReviewItems.push({ card, progress: cardProgress })
       }
@@ -111,10 +142,50 @@ export function TrainingSessionPage() {
     }
   }, [deckId, entry?.learningCount, entry?.newCount, entry?.reviewCount, flashcards, visibleProgress])
 
-  const bufferCounts = queueState.counts
-  const activeEntry = entry?.finished && queueState.localNextEntry
-    ? queueState.localNextEntry
-    : entry
+  const activeEntry = useMemo(() => {
+    if (!entry || !isLimitedExtraSession) {
+      return entry
+    }
+
+    const remainingExtra = Math.max(0, extraLimit - extraAnswered)
+    const remainingExtraNew =
+      queueMode === 'EXTRA_MIXED'
+        ? Math.max(0, extraNewLimit - extraNewAnswered)
+        : remainingExtra
+    const remainingExtraReview =
+      queueMode === 'EXTRA_MIXED'
+        ? Math.max(0, extraReviewLimit - extraReviewAnswered)
+        : remainingExtra
+    return {
+      ...entry,
+      newCount:
+        queueMode === 'EXTRA_NEW' || queueMode === 'EXTRA_MIXED'
+          ? Math.min(entry.newCount || 0, remainingExtraNew)
+          : 0,
+      reviewCount:
+        queueMode === 'EXTRA_REVIEW' || queueMode === 'EXTRA_MIXED'
+          ? Math.min(entry.reviewCount || 0, remainingExtraReview)
+          : 0,
+    }
+  }, [
+    entry,
+    extraAnswered,
+    extraLimit,
+    extraNewAnswered,
+    extraNewLimit,
+    extraReviewAnswered,
+    extraReviewLimit,
+    isLimitedExtraSession,
+    queueMode,
+  ])
+
+  const bufferCounts = activeEntry
+    ? {
+        newCount: activeEntry.newCount,
+        learningCount: activeEntry.learningCount,
+        reviewCount: activeEntry.reviewCount,
+      }
+    : queueState.counts
 
   const loadNext = useCallback(async () => {
     if (!deckId) {
@@ -126,16 +197,20 @@ export function TrainingSessionPage() {
     setIsLoading(true)
     setError('')
     try {
-      setEntry(await getNextTrainingCard(deckId))
+      setEntry(
+        await getNextTrainingCard(deckId, queueMode, extraLimit, extraNewLimit, extraReviewLimit),
+      )
     } catch (requestError) {
       setError(requestError.message)
     } finally {
       setIsLoading(false)
     }
-  }, [deckId, getNextTrainingCard])
+  }, [deckId, extraLimit, extraNewLimit, extraReviewLimit, getNextTrainingCard, queueMode])
 
   useEffect(() => {
-    loadNext()
+    // The session page loads its first card when route parameters identify a new session.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadNext()
   }, [loadNext])
 
   if (!deck) {
@@ -169,17 +244,15 @@ export function TrainingSessionPage() {
   }
 
   if (activeEntry?.finished) {
-    if (!results.length) {
-      return (
-        <EmptyState
-          action={<LinkButton to="/">К наборам</LinkButton>}
-          text="Новых карточек и повторений на сегодня нет."
-          title="Тренировка на сегодня закрыта"
-        />
-      )
-    }
-
-    return <SessionSummary results={results} />
+    return (
+      <SessionSummary
+        answerMode={answerMode}
+        deckId={deckId}
+        directionMode={directionMode}
+        remainingNewCount={activeEntry.newBufferCount}
+        remainingReviewCount={activeEntry.reviewBufferCount}
+      />
+    )
   }
 
   const currentCard = activeEntry.card
@@ -196,8 +269,51 @@ export function TrainingSessionPage() {
         ...current,
         [updatedProgress.flashcardId]: updatedProgress,
       }))
-      setResults((current) => [...current, quality])
-      setEntry(await getNextTrainingCard(deckId))
+      const wasExtraNewCard = isLimitedExtraSession && !activeEntry.progress
+      const wasExtraReviewCard =
+        isLimitedExtraSession &&
+        isReviewStatus(activeEntry.progress?.status) &&
+        isDue(activeEntry.progress.nextReviewDate || activeEntry.progress.nextReviewAt)
+      const nextExtraAnswered = isLimitedExtraSession ? extraAnswered + 1 : extraAnswered
+      const nextExtraNewAnswered = wasExtraNewCard ? extraNewAnswered + 1 : extraNewAnswered
+      const nextExtraReviewAnswered = wasExtraReviewCard
+        ? extraReviewAnswered + 1
+        : extraReviewAnswered
+      if (isLimitedExtraSession) {
+        setExtraAnswered(nextExtraAnswered)
+        setExtraNewAnswered(nextExtraNewAnswered)
+        setExtraReviewAnswered(nextExtraReviewAnswered)
+      }
+
+      const nextExtraLimit = isLimitedExtraSession
+        ? Math.max(0, extraLimit - nextExtraAnswered)
+        : extraLimit
+      const nextExtraNewLimit =
+        queueMode === 'EXTRA_MIXED'
+          ? Math.max(0, extraNewLimit - nextExtraNewAnswered)
+          : extraNewLimit
+      const nextExtraReviewLimit =
+        queueMode === 'EXTRA_MIXED'
+          ? Math.max(0, extraReviewLimit - nextExtraReviewAnswered)
+          : extraReviewLimit
+      const extraLimitsAreSpent =
+        (queueMode === 'EXTRA_NEW' || queueMode === 'EXTRA_REVIEW') && nextExtraLimit <= 0
+          ? true
+          : queueMode === 'EXTRA_MIXED' && nextExtraNewLimit + nextExtraReviewLimit <= 0
+
+      if (isLimitedExtraSession && extraLimitsAreSpent) {
+        const learningCheckEntry = await getNextTrainingCard(deckId, 'GOAL', 0, 0, 0)
+        setEntry(learningCheckEntry)
+      } else {
+        const nextEntry = await getNextTrainingCard(
+          deckId,
+          queueMode,
+          nextExtraLimit,
+          nextExtraNewLimit,
+          nextExtraReviewLimit,
+        )
+        setEntry(nextEntry)
+      }
       setAnswerVersion((current) => current + 1)
     } catch (requestError) {
       setError(requestError.message)

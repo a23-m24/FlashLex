@@ -13,9 +13,10 @@ import org.springframework.web.bind.annotation.RestController;
 import ru.isu.backend.dto.request.AnswerCardRequest;
 import ru.isu.backend.dto.response.DailyStatsResponse;
 import ru.isu.backend.dto.response.LeaderboardRowResponse;
-import ru.isu.backend.dto.response.LearningStatsResponse;
 import ru.isu.backend.dto.response.ProgressResponse;
 import ru.isu.backend.dto.response.TrainingNextResponse;
+import ru.isu.backend.model.LeaderboardPeriod;
+import ru.isu.backend.model.TrainingQueueMode;
 import ru.isu.backend.security.UserPrincipal;
 import ru.isu.backend.service.LearningService;
 
@@ -44,9 +45,20 @@ public class LearningController {
     @GetMapping("/training/next")
     public TrainingNextResponse nextTrainingCard(
             @AuthenticationPrincipal UserPrincipal principal,
-            @RequestParam @Positive Long deckId
+            @RequestParam @Positive Long deckId,
+            @RequestParam(defaultValue = "GOAL") TrainingQueueMode queueMode,
+            @RequestParam(defaultValue = "0") Integer extraLimit,
+            @RequestParam(defaultValue = "0") Integer extraNewLimit,
+            @RequestParam(defaultValue = "0") Integer extraReviewLimit
     ) {
-        return learningService.getNextTrainingCard(principal.getId(), deckId);
+        return learningService.getNextTrainingCard(
+                principal.getId(),
+                deckId,
+                queueMode,
+                extraLimit,
+                extraNewLimit,
+                extraReviewLimit
+        );
     }
 
     @GetMapping("/stats/daily")
@@ -54,13 +66,18 @@ public class LearningController {
         return learningService.getDailyStats(principal.getId());
     }
 
-    @GetMapping("/stats/learning")
-    public LearningStatsResponse learningStats(@AuthenticationPrincipal UserPrincipal principal) {
-        return learningService.getLearningStats(principal.getId());
+    @GetMapping("/stats/daily/history")
+    public List<DailyStatsResponse> dailyStatsHistory(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(defaultValue = "7") Integer days
+    ) {
+        return learningService.getDailyStatsHistory(principal.getId(), days);
     }
 
     @GetMapping("/leaderboard")
-    public List<LeaderboardRowResponse> leaderboard() {
-        return learningService.getLeaderboard();
+    public List<LeaderboardRowResponse> leaderboard(
+            @RequestParam(defaultValue = "DAY") LeaderboardPeriod period
+    ) {
+        return learningService.getLeaderboard(period);
     }
 }

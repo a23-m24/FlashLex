@@ -8,17 +8,32 @@ export function GoalSettingsForm({ user, onSubmit }) {
     dailyNewLimit: user.dailyNewLimit,
     dailyReviewLimit: user.dailyReviewLimit,
   })
+  const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
 
   const update = (field, value) => {
+    setStatus('')
+    setError('')
     setForm((current) => ({
       ...current,
       [field]: value,
     }))
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
-    onSubmit(form)
+    setStatus('')
+    setError('')
+    setIsSaving(true)
+    try {
+      await onSubmit(form)
+      setStatus('Цели сохранены')
+    } catch (submitError) {
+      setError(submitError.message || 'Не удалось сохранить цели')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
@@ -46,10 +61,12 @@ export function GoalSettingsForm({ user, onSubmit }) {
         />
       </div>
       <div className="form-actions">
-        <Button icon={Save} type="submit">
-          Сохранить цели
+        <Button disabled={isSaving} icon={Save} type="submit">
+          {isSaving ? 'Сохранение...' : 'Сохранить цели'}
         </Button>
       </div>
+      {status ? <p className="field__success">{status}</p> : null}
+      {error ? <p className="field__error">{error}</p> : null}
     </form>
   )
 }

@@ -8,6 +8,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
@@ -15,6 +16,7 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.BatchSize;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -24,7 +26,14 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "decks")
+@Table(
+        name = "decks",
+        indexes = {
+                @Index(name = "idx_decks_author_created", columnList = "author_id, created_at"),
+                @Index(name = "idx_decks_source", columnList = "source_deck_id"),
+                @Index(name = "idx_decks_catalog", columnList = "published, level, rating")
+        }
+)
 public class Deck {
 
     @Id
@@ -41,6 +50,10 @@ public class Deck {
     @JoinColumn(name = "author_id", nullable = false)
     private User author;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_deck_id")
+    private Deck sourceDeck;
+
     @Column(nullable = false)
     private Boolean published = false;
 
@@ -48,7 +61,15 @@ public class Deck {
     private String level;
 
     @ElementCollection
-    @CollectionTable(name = "deck_tags", joinColumns = @JoinColumn(name = "deck_id"))
+    @BatchSize(size = 100)
+    @CollectionTable(
+            name = "deck_tags",
+            joinColumns = @JoinColumn(name = "deck_id"),
+            indexes = {
+                    @Index(name = "idx_deck_tags_deck", columnList = "deck_id"),
+                    @Index(name = "idx_deck_tags_tag", columnList = "tag")
+            }
+    )
     @Column(name = "tag", nullable = false, length = 50)
     private List<String> tags = new ArrayList<>();
 

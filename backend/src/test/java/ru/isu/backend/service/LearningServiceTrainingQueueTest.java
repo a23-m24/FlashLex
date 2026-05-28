@@ -12,6 +12,7 @@ import ru.isu.backend.model.Deck;
 import ru.isu.backend.model.Flashcard;
 import ru.isu.backend.model.FlashcardProgress;
 import ru.isu.backend.model.LearningStatus;
+import ru.isu.backend.model.TrainingQueueMode;
 import ru.isu.backend.model.User;
 import ru.isu.backend.repository.DailyUserStatsRepository;
 import ru.isu.backend.repository.DeckRepository;
@@ -21,7 +22,6 @@ import ru.isu.backend.repository.UserRepository;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -74,9 +74,18 @@ class LearningServiceTrainingQueueTest {
                 LocalDateTime.now().plusMinutes(10)
         );
 
-        when(deckRepository.findById(deck.getId())).thenReturn(Optional.of(deck));
-        when(flashcardRepository.findNewCardsInDeck(user.getId(), deck.getId())).thenReturn(List.of());
-        when(progressRepository.findByUserAndDeck(user.getId(), deck.getId())).thenReturn(List.of(learning));
+        when(deckRepository.findTrainingContextById(deck.getId())).thenReturn(Optional.of(trainingContext(deck)));
+        when(flashcardRepository.countNewCardsInDeck(user.getId(), deck.getId())).thenReturn(0L);
+        when(progressRepository.countByUserAndDeckAndStatus(user.getId(), deck.getId(), LearningStatus.LEARNING))
+                .thenReturn(1L);
+        when(progressRepository.countDueReviewByUserAndDeck(
+                user.getId(),
+                deck.getId(),
+                LearningStatus.REVIEW,
+                LocalDate.now()
+        )).thenReturn(0L);
+        when(progressRepository.findFirstLearningByUserAndDeck(user.getId(), deck.getId(), LearningStatus.LEARNING))
+                .thenReturn(Optional.of(learning));
 
         TrainingNextResponse response = service.getNextTrainingCard(user.getId(), deck.getId());
 
@@ -100,24 +109,106 @@ class LearningServiceTrainingQueueTest {
                 LearningStatus.REVIEW,
                 LocalDate.now().atStartOfDay()
         );
-        FlashcardProgress futureReview = progress(
-                1001L,
-                user,
-                futureCard,
-                LearningStatus.REVIEW,
-                LocalDate.now().plusDays(1).atStartOfDay()
-        );
 
-        when(deckRepository.findById(deck.getId())).thenReturn(Optional.of(deck));
-        when(flashcardRepository.findNewCardsInDeck(user.getId(), deck.getId())).thenReturn(List.of());
-        when(progressRepository.findByUserAndDeck(user.getId(), deck.getId()))
-                .thenReturn(List.of(dueReview, futureReview));
+        when(deckRepository.findTrainingContextById(deck.getId())).thenReturn(Optional.of(trainingContext(deck)));
+        when(flashcardRepository.countNewCardsInDeck(user.getId(), deck.getId())).thenReturn(0L);
+        when(progressRepository.countByUserAndDeckAndStatus(user.getId(), deck.getId(), LearningStatus.LEARNING))
+                .thenReturn(0L);
+        when(progressRepository.countDueReviewByUserAndDeck(
+                user.getId(),
+                deck.getId(),
+                LearningStatus.REVIEW,
+                LocalDate.now()
+        )).thenReturn(1L);
+        when(progressRepository.findFirstDueReviewByUserAndDeck(
+                user.getId(),
+                deck.getId(),
+                LearningStatus.REVIEW,
+                LocalDate.now()
+        )).thenReturn(Optional.of(dueReview));
 
         TrainingNextResponse response = service.getNextTrainingCard(user.getId(), deck.getId());
 
         assertThat(response.finished()).isFalse();
         assertThat(response.card().id()).isEqualTo(dueCard.getId());
         assertThat(response.reviewCount()).isEqualTo(1);
+    }
+
+    @Test
+    void extraNewModeCapsVisibleCountByRequestedLimit() {
+        User user = user(1L);
+        Deck deck = deck(10L, user);
+        Flashcard firstCard = card(100L, deck);
+        when(deckRepository.findTrainingContextById(deck.getId())).thenReturn(Optional.of(trainingContext(deck)));
+        when(flashcardRepository.countNewCardsInDeck(user.getId(), deck.getId())).thenReturn(3L);
+        when(progressRepository.countByUserAndDeckAndStatus(user.getId(), deck.getId(), LearningStatus.LEARNING))
+                .thenReturn(0L);
+        when(progressRepository.countDueReviewByUserAndDeck(
+                user.getId(),
+                deck.getId(),
+                LearningStatus.REVIEW,
+                LocalDate.now()
+        )).thenReturn(0L);
+        when(flashcardRepository.findFirstNewCardInDeck(user.getId(), deck.getId()))
+                .thenReturn(Optional.of(firstCard));
+
+        TrainingNextResponse response = service.getNextTrainingCard(
+                user.getId(),
+                deck.getId(),
+                TrainingQueueMode.EXTRA_NEW,
+                2
+        );
+
+        assertThat(response.finished()).isFalse();
+        assertThat(response.card().id()).isEqualTo(firstCard.getId());
+        assertThat(response.newCount()).isEqualTo(2);
+        assertThat(response.newBufferCount()).isEqualTo(3);
+        assertThat(response.reviewCount()).isZero();
+    }
+
+    @Test
+    void extraMixedModeUsesSeparateNewAndReviewLimits() {
+        User user = user(1L);
+        Deck deck = deck(10L, user);
+        Flashcard newCard = card(100L, deck);
+        Flashcard hiddenNewCard = card(101L, deck);
+        Flashcard reviewCard = card(102L, deck);
+        FlashcardProgress dueReview = progress(
+                1000L,
+                user,
+                reviewCard,
+                LearningStatus.REVIEW,
+                LocalDate.now().atStartOfDay()
+        );
+
+        when(deckRepository.findTrainingContextById(deck.getId())).thenReturn(Optional.of(trainingContext(deck)));
+        when(flashcardRepository.countNewCardsInDeck(user.getId(), deck.getId())).thenReturn(2L);
+        when(progressRepository.countByUserAndDeckAndStatus(user.getId(), deck.getId(), LearningStatus.LEARNING))
+                .thenReturn(0L);
+        when(progressRepository.countDueReviewByUserAndDeck(
+                user.getId(),
+                deck.getId(),
+                LearningStatus.REVIEW,
+                LocalDate.now()
+        )).thenReturn(1L);
+        when(flashcardRepository.findFirstNewCardInDeck(user.getId(), deck.getId()))
+                .thenReturn(Optional.of(newCard));
+
+        TrainingNextResponse response = service.getNextTrainingCard(
+                user.getId(),
+                deck.getId(),
+                TrainingQueueMode.EXTRA_MIXED,
+                0,
+                1,
+                0
+        );
+
+        assertThat(response.finished()).isFalse();
+        assertThat(response.card().id()).isEqualTo(newCard.getId());
+        assertThat(response.newCount()).isEqualTo(1);
+        assertThat(response.reviewCount()).isZero();
+        assertThat(response.newBufferCount()).isEqualTo(2);
+        assertThat(response.reviewBufferCount()).isEqualTo(1);
     }
 
     private User user(Long id) {
@@ -136,6 +227,30 @@ class LearningServiceTrainingQueueTest {
         deck.setDescription("Deck description");
         deck.setLevel("A1");
         return deck;
+    }
+
+    private DeckRepository.TrainingDeckContext trainingContext(Deck deck) {
+        return new DeckRepository.TrainingDeckContext() {
+            @Override
+            public Long getId() {
+                return deck.getId();
+            }
+
+            @Override
+            public Long getAuthorId() {
+                return deck.getAuthor().getId();
+            }
+
+            @Override
+            public Integer getDailyNewLimit() {
+                return deck.getAuthor().getDailyNewLimit();
+            }
+
+            @Override
+            public Integer getDailyReviewLimit() {
+                return deck.getAuthor().getDailyReviewLimit();
+            }
+        };
     }
 
     private Flashcard card(Long id, Deck deck) {

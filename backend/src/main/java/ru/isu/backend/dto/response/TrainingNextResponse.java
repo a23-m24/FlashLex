@@ -11,6 +11,8 @@ public record TrainingNextResponse(
         Integer newCount,
         Integer learningCount,
         Integer reviewCount,
+        Integer newBufferCount,
+        Integer reviewBufferCount,
         List<TrainingAnswerOptionResponse> answerOptions
 ) {
 }

@@ -1,4 +1,4 @@
-import { Copy, Edit, Globe2, Play, Trash2 } from 'lucide-react'
+import { Copy, Download, Edit, Globe2, Play, Star, Trash2 } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useFlashLex } from '../features/auth/useFlashLex'
 import {
@@ -6,6 +6,7 @@ import {
   phraseTypeLabels,
   statusLabels,
 } from '../shared/lib/labels'
+import { cardsToCsv, downloadCsv, safeCsvFilename } from '../shared/lib/csv'
 import { getDeckCards, getProgress, getStatusSummary } from '../shared/lib/metrics'
 import { Badge } from '../shared/ui/Badge'
 import { Button } from '../shared/ui/Button'
@@ -22,6 +23,8 @@ export function DeckDetailsPage() {
     cloneDeck,
     deleteDeck,
     publishDeck,
+    rateDeck,
+    removeDeckRating,
   } = useFlashLex()
   const navigate = useNavigate()
   const deck = decks.find((item) => item.id === deckId)
@@ -38,7 +41,14 @@ export function DeckDetailsPage() {
   const cards = getDeckCards(flashcards, deck.id)
   const summary = getStatusSummary(cards, progress)
   const isOwner = deck.authorId === user.id
+  const ownedClone = decks.find((item) => item.authorId === user.id && item.sourceDeckId === deck.id)
   const total = cards.length || 1
+  const ratingLabel = deck.rating ? deck.rating.toFixed(1) : '-'
+  const ratingDescription = !deck.ratingTargetId
+    ? 'Личный набор без источника.'
+    : deck.ratingTargetId === deck.id
+      ? 'Рейтинг этого публичного набора.'
+      : `Оценка исходного набора: ${deck.sourceDeckName}.`
 
   const handleClone = async () => {
     const clonedId = await cloneDeck(deck.id)
@@ -49,6 +59,18 @@ export function DeckDetailsPage() {
     if (!window.confirm('Удалить набор вместе с карточками и прогрессом?')) return
     await deleteDeck(deck.id)
     navigate('/')
+  }
+
+  const handleRating = async (value) => {
+    await rateDeck(deck.id, value)
+  }
+
+  const handleRemoveRating = async () => {
+    await removeDeckRating(deck.id)
+  }
+
+  const handleExportCsv = () => {
+    downloadCsv(safeCsvFilename(deck.name), cardsToCsv(cards))
   }
 
   return (
@@ -64,6 +86,12 @@ export function DeckDetailsPage() {
             </Badge>
             <Badge tone="blue">{deck.level}</Badge>
             <Badge tone="neutral">{deck.authorName}</Badge>
+            {deck.sourceDeckId && !deck.isPublished ? (
+              <Badge tone="blue">Из каталога: {deck.sourceDeckName}</Badge>
+            ) : null}
+            {deck.sourceDeckId && deck.isPublished ? (
+              <Badge tone="blue">Основано на: {deck.sourceDeckName}</Badge>
+            ) : null}
             {deck.tags?.map((tag) => (
               <Badge key={tag} tone="green">
                 {tag}
@@ -75,6 +103,9 @@ export function DeckDetailsPage() {
           <LinkButton icon={Play} to={`/training?deck=${deck.id}`}>
             Учить
           </LinkButton>
+          <Button icon={Download} onClick={handleExportCsv} variant="secondary">
+            CSV
+          </Button>
           {isOwner ? (
             <>
               <LinkButton icon={Edit} to={`/decks/${deck.id}/edit`} variant="secondary">
@@ -89,6 +120,10 @@ export function DeckDetailsPage() {
                 Удалить
               </Button>
             </>
+          ) : ownedClone ? (
+            <LinkButton to={`/decks/${ownedClone.id}`} variant="secondary">
+              Открыть мой набор
+            </LinkButton>
           ) : (
             <Button icon={Copy} onClick={handleClone} variant="secondary">
               Добавить себе
@@ -123,14 +158,52 @@ export function DeckDetailsPage() {
               <span>карточек</span>
             </div>
             <div className="mini-stat">
-              <strong>{deck.rating || '-'}</strong>
-              <span>рейтинг</span>
+              <strong>{ratingLabel}</strong>
+              <span>рейтинг ({deck.ratingsCount})</span>
             </div>
             <div className="mini-stat">
               <strong>{deck.clones}</strong>
               <span>добавлений</span>
             </div>
           </div>
+        </section>
+
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <h2>Оценка</h2>
+              <p>{ratingDescription}</p>
+            </div>
+          </div>
+          {deck.canRate ? (
+            <div className="rating-control">
+              <div className="rating-control__stars" aria-label="Оценка набора">
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <button
+                    aria-label={`Оценить на ${value}`}
+                    className={value <= (deck.userRating || 0) ? 'rating-star rating-star--active' : 'rating-star'}
+                    key={value}
+                    onClick={() => handleRating(value)}
+                    type="button"
+                  >
+                    <Star aria-hidden="true" size={22} />
+                  </button>
+                ))}
+              </div>
+              <span>{deck.userRating ? `Ваша оценка: ${deck.userRating}` : 'Вы еще не оценивали'}</span>
+              {deck.userRating ? (
+                <Button onClick={handleRemoveRating} size="sm" variant="ghost">
+                  Убрать оценку
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <p className="muted">
+              {deck.ratingTargetId
+                ? 'Автор не может оценивать свой набор.'
+                : 'Личный набор без источника нельзя оценить.'}
+            </p>
+          )}
         </section>
       </div>
 

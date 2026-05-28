@@ -12,7 +12,6 @@ public class UserMapper {
                 user.getId(),
                 user.getName(),
                 user.getEmail(),
-                user.getRole(),
                 user.getDailyNewLimit(),
                 user.getDailyReviewLimit(),
                 user.getRegisteredAt()

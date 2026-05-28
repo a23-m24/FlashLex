@@ -1,4 +1,4 @@
-export function ProgressBar({ value, max = 100, label }) {
+export function ProgressBar({ value, max = 100, label, extra = 0 }) {
   const percent = max ? Math.min(100, Math.round((value / max) * 100)) : 0
 
   return (
@@ -7,6 +7,7 @@ export function ProgressBar({ value, max = 100, label }) {
         <span>{label}</span>
         <strong>
           {value}/{max}
+          {extra > 0 ? ` + ${extra} доп.` : ''}
         </strong>
       </div>
       <div className="progress__track" aria-hidden="true">

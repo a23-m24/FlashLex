@@ -18,7 +18,6 @@ import java.io.IOException;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
-    private final CurrentUserService currentUserService;
 
     @Override
     protected void doFilterInternal(
@@ -35,17 +34,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = authHeader.substring(7);
         try {
             String email = jwtService.extractEmail(token);
-            if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                UserPrincipal principal = (UserPrincipal) currentUserService.loadUserByUsername(email);
-                if (jwtService.isValid(token, principal)) {
-                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                            principal,
-                            null,
-                            principal.getAuthorities()
-                    );
-                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                }
+            Long userId = jwtService.extractUserId(token);
+            if (email != null
+                    && userId != null
+                    && SecurityContextHolder.getContext().getAuthentication() == null
+                    && jwtService.isValid(token)) {
+                UserPrincipal principal = new UserPrincipal(userId, email);
+                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                        principal,
+                        null,
+                        principal.getAuthorities()
+                );
+                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         } catch (RuntimeException ignored) {
             SecurityContextHolder.clearContext();

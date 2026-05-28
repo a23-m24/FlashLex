@@ -8,6 +8,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -25,7 +26,11 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "flashcard_progress",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "flashcard_id"})
+        uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "flashcard_id"}),
+        indexes = {
+                @Index(name = "idx_progress_user_status_date", columnList = "user_id, status, next_review_date"),
+                @Index(name = "idx_progress_flashcard", columnList = "flashcard_id")
+        }
 )
 public class FlashcardProgress {
 

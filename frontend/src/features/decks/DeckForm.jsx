@@ -1,5 +1,6 @@
-import { Plus, Save, X } from 'lucide-react'
+import { Download, Plus, Save, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { cardsToCsv, downloadCsv, parseCardsCsv, safeCsvFilename } from '../../shared/lib/csv'
 import { Button } from '../../shared/ui/Button'
 import { Input } from '../../shared/ui/Input'
 import { Select } from '../../shared/ui/Select'
@@ -20,6 +21,13 @@ const createBlankCard = () => ({
   draftId: `draft-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
 })
 
+const isBlankDraftCard = (card) =>
+  !card.id &&
+  !card.englishWord.trim() &&
+  !card.translation.trim() &&
+  !card.transcription.trim() &&
+  !card.exampleSentence.trim()
+
 export function DeckForm({ initialDeck, initialCards, onSubmit }) {
   const [form, setForm] = useState(() => ({
     name: initialDeck?.name || '',
@@ -33,6 +41,7 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
   const [submitted, setSubmitted] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [submitError, setSubmitError] = useState('')
+  const [csvStatus, setCsvStatus] = useState('')
 
   const errors = useMemo(() => {
     const result = {}
@@ -50,6 +59,7 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
 
   const update = (field, value) => {
     setSubmitError('')
+    setCsvStatus('')
     setForm((current) => ({ ...current, [field]: value }))
   }
 
@@ -57,6 +67,7 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
     const tag = tagInput.trim().toLowerCase()
     if (!tag) return
     setSubmitError('')
+    setCsvStatus('')
     setForm((current) => ({
       ...current,
       tags: current.tags.includes(tag) ? current.tags : [...current.tags, tag],
@@ -66,6 +77,7 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
 
   const removeTag = (tag) => {
     setSubmitError('')
+    setCsvStatus('')
     setForm((current) => ({
       ...current,
       tags: current.tags.filter((item) => item !== tag),
@@ -81,6 +93,7 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
 
   const handleCardChange = (index, nextCard) => {
     setSubmitError('')
+    setCsvStatus('')
     setForm((current) => ({
       ...current,
       cards: current.cards.map((card, cardIndex) =>
@@ -91,6 +104,7 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
 
   const addCard = () => {
     setSubmitError('')
+    setCsvStatus('')
     setForm((current) => ({
       ...current,
       cards: [createBlankCard(), ...current.cards],
@@ -99,10 +113,45 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
 
   const removeCard = (index) => {
     setSubmitError('')
+    setCsvStatus('')
     setForm((current) => ({
       ...current,
       cards: current.cards.filter((_, cardIndex) => cardIndex !== index),
     }))
+  }
+
+  const handleExportCsv = () => {
+    const exportCards = form.cards.filter((card) => !isBlankDraftCard(card))
+    if (!exportCards.length) {
+      setSubmitError('Нет карточек для экспорта')
+      return
+    }
+    downloadCsv(safeCsvFilename(form.name || initialDeck?.name), cardsToCsv(exportCards))
+  }
+
+  const handleImportCsv = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setSubmitError('')
+    setCsvStatus('')
+    try {
+      const importedCards = parseCardsCsv(await file.text())
+      setForm((current) => {
+        const currentCards =
+          current.cards.length === 1 && isBlankDraftCard(current.cards[0])
+            ? []
+            : current.cards
+        return {
+          ...current,
+          cards: [...importedCards, ...currentCards],
+        }
+      })
+      setCsvStatus(`Импортировано карточек: ${importedCards.length}`)
+    } catch (error) {
+      setSubmitError(error.message || 'Не удалось импортировать CSV')
+    }
   }
 
   const handleSubmit = async (event) => {
@@ -212,10 +261,21 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
             <h2>Карточки</h2>
             <p>Слова, устойчивые обороты, примеры и сложность.</p>
           </div>
-          <Button onClick={addCard} type="button" variant="secondary">
-            Добавить карточку
-          </Button>
+          <div className="form-actions">
+            <Button icon={Download} onClick={handleExportCsv} type="button" variant="ghost">
+              Экспорт CSV
+            </Button>
+            <label className="button button--secondary button--md csv-import-button">
+              <Upload aria-hidden="true" size={18} />
+              <span>Импорт CSV</span>
+              <input accept=".csv,text/csv" onChange={handleImportCsv} type="file" />
+            </label>
+            <Button onClick={addCard} type="button" variant="secondary">
+              Добавить карточку
+            </Button>
+          </div>
         </div>
+        {csvStatus ? <p className="field__success">{csvStatus}</p> : null}
         <div className="flashcard-editor-list">
           {form.cards.map((card, index) => (
             <FlashcardEditor

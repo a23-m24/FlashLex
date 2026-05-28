@@ -11,10 +11,23 @@ export function SettingsPage() {
     name: user.name,
     email: user.email,
   })
+  const [profileStatus, setProfileStatus] = useState('')
+  const [profileError, setProfileError] = useState('')
+  const [isProfileSaving, setIsProfileSaving] = useState(false)
 
   const handleProfileSubmit = async (event) => {
     event.preventDefault()
-    await updateProfile(profile)
+    setProfileStatus('')
+    setProfileError('')
+    setIsProfileSaving(true)
+    try {
+      await updateProfile(profile)
+      setProfileStatus('Профиль сохранен')
+    } catch (error) {
+      setProfileError(error.message || 'Не удалось сохранить профиль')
+    } finally {
+      setIsProfileSaving(false)
+    }
   }
 
   return (
@@ -37,20 +50,30 @@ export function SettingsPage() {
           </div>
           <Input
             label="Имя"
-            onChange={(event) => setProfile({ ...profile, name: event.target.value })}
+            onChange={(event) => {
+              setProfile({ ...profile, name: event.target.value })
+              setProfileStatus('')
+              setProfileError('')
+            }}
             value={profile.name}
           />
           <Input
             label="Email"
-            onChange={(event) => setProfile({ ...profile, email: event.target.value })}
+            onChange={(event) => {
+              setProfile({ ...profile, email: event.target.value })
+              setProfileStatus('')
+              setProfileError('')
+            }}
             type="email"
             value={profile.email}
           />
           <div className="form-actions">
-            <Button icon={Save} type="submit">
-              Сохранить профиль
+            <Button disabled={isProfileSaving} icon={Save} type="submit">
+              {isProfileSaving ? 'Сохранение...' : 'Сохранить профиль'}
             </Button>
           </div>
+          {profileStatus ? <p className="field__success">{profileStatus}</p> : null}
+          {profileError ? <p className="field__error">{profileError}</p> : null}
         </form>
 
         <GoalSettingsForm onSubmit={updateGoal} user={user} />

@@ -27,14 +27,20 @@ public class UserService {
     @Transactional
     public UserResponse updateProfile(Long userId, ProfileRequest request) {
         User user = findUser(userId);
+        String name = request.name().trim();
         String email = request.email().trim().toLowerCase();
+        userRepository.findByNameIgnoreCase(name)
+                .filter(found -> !found.getId().equals(userId))
+                .ifPresent(found -> {
+                    throw new DuplicateResourceException("Имя уже занято");
+                });
         userRepository.findByEmail(email)
                 .filter(found -> !found.getId().equals(userId))
                 .ifPresent(found -> {
-                    throw new DuplicateResourceException("Email is already registered");
+                    throw new DuplicateResourceException("Email уже используется");
                 });
 
-        user.setName(request.name().trim());
+        user.setName(name);
         user.setEmail(email);
         return userMapper.toResponse(user);
     }

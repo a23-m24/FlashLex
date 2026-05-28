@@ -1,23 +1,8 @@
-import { isDue } from './date'
-
 export const getDeckCards = (flashcards, deckId) =>
   flashcards.filter((card) => card.deckId === deckId)
 
-export const countBy = (items, selector) =>
-  items.reduce((acc, item) => {
-    const key = selector(item)
-    acc[key] = (acc[key] || 0) + 1
-    return acc
-  }, {})
-
 export const getProgress = (progress, cardId) =>
   progress.find((item) => item.flashcardId === cardId)
-
-export const getDueCards = (cards, progress) =>
-  cards.filter((card) => {
-    const cardProgress = getProgress(progress, card.id)
-    return !cardProgress || isDue(cardProgress.nextReviewAt || cardProgress.nextReviewDate)
-  })
 
 export const getWeakCards = (cards, progress) =>
   cards

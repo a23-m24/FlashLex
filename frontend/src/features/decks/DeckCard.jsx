@@ -12,12 +12,16 @@ export function DeckCard({
   currentUserId,
   onClone,
   onPublish,
+  ownedCloneId,
   showStudyAction = true,
 }) {
   const cards = getDeckCards(flashcards, deck.id)
   const phraseTypes = [...new Set(cards.map((card) => card.phraseType))].slice(0, 3)
   const isOwner = deck.authorId === currentUserId
   const tags = deck.tags || []
+  const isPrivateCatalogCopy = deck.sourceDeckId && !deck.isPublished
+  const isPublishedDerivative = deck.sourceDeckId && deck.isPublished
+  const ratingLabel = deck.rating ? `${deck.rating.toFixed(1)} (${deck.ratingsCount})` : '-'
 
   return (
     <article className="deck-card">
@@ -28,8 +32,8 @@ export function DeckCard({
           </Link>
           <p>{deck.description}</p>
         </div>
-        <Badge tone={deck.isPublished ? 'green' : 'neutral'}>
-          {deck.isPublished ? 'Публичный' : 'Личный'}
+        <Badge tone={deck.isPublished ? 'green' : isPrivateCatalogCopy ? 'blue' : 'neutral'}>
+          {deck.isPublished ? 'Публичный' : isPrivateCatalogCopy ? 'Из каталога' : 'Личный'}
         </Badge>
       </div>
 
@@ -38,6 +42,8 @@ export function DeckCard({
         <span>{deck.level}</span>
         <span>{cards.length} карточек</span>
         <span>{deck.authorName}</span>
+        {isPrivateCatalogCopy ? <span>Источник: {deck.sourceDeckName}</span> : null}
+        {isPublishedDerivative ? <span>Основано на: {deck.sourceDeckName}</span> : null}
       </div>
 
       <div className="tag-row">
@@ -56,7 +62,7 @@ export function DeckCard({
       <div className="deck-card__stats">
         <span>
           <Star aria-hidden="true" size={16} />
-          {deck.rating || '-'}
+          {ratingLabel}
         </span>
         <span>
           <Users aria-hidden="true" size={16} />
@@ -79,6 +85,10 @@ export function DeckCard({
               </Button>
             ) : null}
           </>
+        ) : ownedCloneId ? (
+          <LinkButton to={`/decks/${ownedCloneId}`} variant="ghost">
+            Открыть мой
+          </LinkButton>
         ) : (
           <Button icon={Copy} onClick={() => onClone(deck.id)} variant="ghost">
             Добавить

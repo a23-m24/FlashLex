@@ -6,7 +6,6 @@ public record UserResponse(
         Long id,
         String name,
         String email,
-        String role,
         Integer dailyNewLimit,
         Integer dailyReviewLimit,
         LocalDateTime registeredAt

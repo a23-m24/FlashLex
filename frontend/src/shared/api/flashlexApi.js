@@ -41,6 +41,8 @@ const toDateTime = (value) => (value ? String(value) : '')
 
 const toId = (value) => String(value)
 
+const toOptionalId = (value) => (value === null || value === undefined ? null : String(value))
+
 const unwrapPage = (response) => response?.content || response || []
 
 const parseErrorMessage = (payload, fallback) => {
@@ -94,7 +96,6 @@ export const normalizeUser = (user) => ({
   id: toId(user.id),
   name: user.name,
   email: user.email,
-  role: user.role,
   dailyNewLimit: user.dailyNewLimit,
   dailyReviewLimit: user.dailyReviewLimit,
   registeredAt: toDate(user.registeredAt),
@@ -117,11 +118,17 @@ export const normalizeDeck = (deck) => ({
   description: deck.description,
   authorId: toId(deck.authorId),
   authorName: deck.authorName,
+  sourceDeckId: toOptionalId(deck.sourceDeckId),
+  sourceDeckName: deck.sourceDeckName || '',
+  sourceAuthorName: deck.sourceAuthorName || '',
   isPublished: Boolean(deck.published),
   tags: deck.tags || [],
   level: deck.level,
   rating: deck.rating || 0,
   ratingsCount: deck.ratingsCount || 0,
+  ratingTargetId: toOptionalId(deck.ratingTargetId),
+  userRating: deck.userRating ?? null,
+  canRate: Boolean(deck.canRate),
   clones: deck.clonesCount || 0,
   createdAt: toDate(deck.createdAt),
   metrics: deck.metrics || null,
@@ -160,19 +167,12 @@ export const normalizeLeaderboardRow = (row) => ({
   userId: toId(row.userId),
   name: row.name,
   learnedToday: row.learnedToday || 0,
+  reviewed: row.reviewed || 0,
+  extraNew: row.extraNew || 0,
+  extraReview: row.extraReview || 0,
   streakDays: row.streakDays || 0,
   accuracy: row.accuracy || 0,
   points: row.points || 0,
-})
-
-export const normalizeLearningStats = (stats) => ({
-  ...stats,
-  dailyStats: normalizeDailyStats(stats.dailyStats),
-  weakCards: (stats.weakCards || []).map((item) => ({
-    ...item,
-    card: normalizeCard(item.card, item.card.deckId || ''),
-    progress: normalizeProgress(item.progress),
-  })),
 })
 
 export const normalizeTrainingNext = (entry) => ({
@@ -184,6 +184,8 @@ export const normalizeTrainingNext = (entry) => ({
   newCount: entry.newCount || 0,
   learningCount: entry.learningCount || 0,
   reviewCount: entry.reviewCount || 0,
+  newBufferCount: entry.newBufferCount ?? entry.newCount ?? 0,
+  reviewBufferCount: entry.reviewBufferCount ?? entry.reviewCount ?? 0,
   answerOptions: (entry.answerOptions || []).map((option) => ({
     quality: option.quality,
     intervalMinutes: option.intervalMinutes || 0,
@@ -218,6 +220,7 @@ const toDeckRequest = (payload) => ({
   published: Boolean(payload.isPublished),
   tags: payload.tags || [],
   cards: (payload.cards || []).map((card) => ({
+    id: card.id && !String(card.id).startsWith('draft-') ? Number(card.id) : undefined,
     englishWord: card.englishWord,
     translation: card.translation,
     transcription: card.transcription || null,
@@ -253,9 +256,19 @@ export const flashlexApi = {
   publicDecks: () => request('/decks/public?size=100'),
   progress: (token) => request('/progress', { token }),
   dailyStats: (token) => request('/stats/daily', { token }),
-  learningStats: (token) => request('/stats/learning', { token }),
-  leaderboard: () => request('/leaderboard'),
-  trainingNext: (deckId) => request(`/training/next?deckId=${Number(deckId)}`),
+  dailyStatsHistory: (days = 7, token = getStoredToken()) =>
+    request(`/stats/daily/history?days=${Math.max(1, Number(days || 7))}`, { token }),
+  leaderboard: (period = 'DAY') => request(`/leaderboard?period=${encodeURIComponent(period)}`),
+  trainingNext: (
+    deckId,
+    queueMode = 'GOAL',
+    extraLimit = 0,
+    extraNewLimit = 0,
+    extraReviewLimit = 0,
+  ) =>
+    request(
+      `/training/next?deckId=${Number(deckId)}&queueMode=${encodeURIComponent(queueMode)}&extraLimit=${Math.max(0, Number(extraLimit || 0))}&extraNewLimit=${Math.max(0, Number(extraNewLimit || 0))}&extraReviewLimit=${Math.max(0, Number(extraReviewLimit || 0))}`,
+    ),
 
   createDeck: (payload) =>
     request('/decks', {
@@ -282,6 +295,17 @@ export const flashlexApi = {
   cloneDeck: (deckId) =>
     request(`/decks/${deckId}/clone`, {
       method: 'POST',
+    }),
+
+  rateDeck: (deckId, value) =>
+    request(`/decks/${deckId}/rating`, {
+      method: 'POST',
+      body: { value: Number(value) },
+    }),
+
+  removeDeckRating: (deckId) =>
+    request(`/decks/${deckId}/rating`, {
+      method: 'DELETE',
     }),
 
   answerCard: (flashcardId, quality) =>

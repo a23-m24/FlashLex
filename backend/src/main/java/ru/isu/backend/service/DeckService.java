@@ -2,6 +2,7 @@ package ru.isu.backend.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +24,11 @@ import ru.isu.backend.repository.UserRepository;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -37,31 +43,35 @@ public class DeckService {
     private final DeckMapper deckMapper;
 
     public List<DeckResponse> getMyDecks(Long userId) {
-        return deckRepository.findByAuthorIdOrderByCreatedAtDesc(userId).stream()
-                .map(this::toResponse)
-                .toList();
+        return toResponses(deckRepository.findByAuthorIdOrderByCreatedAtDesc(userId), userId);
     }
 
     public Page<DeckResponse> searchPublishedDecks(
             String query,
             String level,
             String tag,
+            Long currentUserId,
             Pageable pageable
     ) {
-        return deckRepository.searchPublished(
+        Page<Deck> decksPage = deckRepository.searchPublished(
                 normalizeFilter(query),
                 normalizeFilter(level),
                 normalizeFilter(tag),
                 pageable
-        ).map(this::toResponse);
+        );
+        return new PageImpl<>(
+                toResponses(decksPage.getContent(), currentUserId),
+                decksPage.getPageable(),
+                decksPage.getTotalElements()
+        );
     }
 
     public DeckResponse getDeck(Long deckId, Long currentUserId) {
-        Deck deck = findDeck(deckId);
+        Deck deck = findDeckWithRelations(deckId);
         if (!deck.getPublished() && (currentUserId == null || !deck.getAuthor().getId().equals(currentUserId))) {
             throw new ForbiddenOperationException("Cannot access a private deck");
         }
-        return toResponse(deck);
+        return toResponse(deck, currentUserId);
     }
 
     @Transactional
@@ -75,41 +85,55 @@ public class DeckService {
         Deck savedDeck = deckRepository.save(deck);
         List<Flashcard> cards = saveCards(savedDeck, request);
 
-        return deckMapper.toDeckResponse(savedDeck, cards);
+        return deckMapper.toDeckResponse(
+                savedDeck,
+                cards,
+                Boolean.TRUE.equals(savedDeck.getPublished()) ? savedDeck : null,
+                null,
+                false
+        );
     }
 
     @Transactional
     public DeckResponse updateDeck(Long userId, Long deckId, DeckRequest request) {
-        Deck deck = findDeck(deckId);
+        Deck deck = findDeckWithRelations(deckId);
         requireOwner(deck, userId);
 
         applyDeckFields(deck, request);
-        flashcardProgressRepository.deleteByFlashcardDeckId(deck.getId());
-        flashcardRepository.deleteByDeckId(deck.getId());
-        List<Flashcard> cards = saveCards(deck, request);
+        List<Flashcard> cards = syncCards(deck, request);
 
-        return deckMapper.toDeckResponse(deck, cards);
+        return toResponse(deck, userId, cards);
     }
 
     @Transactional
     public DeckResponse publishDeck(Long userId, Long deckId) {
-        Deck deck = findDeck(deckId);
+        Deck deck = findDeckWithRelations(deckId);
         requireOwner(deck, userId);
         deck.setPublished(true);
-        return toResponse(deck);
+        return toResponse(deck, userId);
     }
 
     @Transactional
     public DeckResponse cloneDeck(Long userId, Long sourceDeckId) {
         User user = findUser(userId);
-        Deck source = findDeck(sourceDeckId);
+        Deck source = findDeckWithRelations(sourceDeckId);
         if (!source.getPublished() && !source.getAuthor().getId().equals(userId)) {
             throw new ForbiddenOperationException("Cannot clone a private deck");
+        }
+        if (source.getPublished() && !source.getAuthor().getId().equals(userId)) {
+            Optional<Deck> existingClone = deckRepository.findFirstByAuthorIdAndSourceDeckIdOrderByCreatedAtDesc(
+                    userId,
+                    source.getId()
+            );
+            if (existingClone.isPresent()) {
+                return toResponse(existingClone.get(), userId);
+            }
         }
 
         Deck clone = new Deck();
         clone.setAuthor(user);
-        clone.setName(source.getName() + " - copy");
+        clone.setSourceDeck(source.getPublished() ? source : source.getSourceDeck());
+        clone.setName(source.getName());
         clone.setDescription(source.getDescription());
         clone.setPublished(false);
         clone.setLevel(source.getLevel());
@@ -127,48 +151,152 @@ public class DeckService {
                 .toList();
         List<Flashcard> savedCards = flashcardRepository.saveAll(clonedCards);
 
-        return deckMapper.toDeckResponse(savedClone, savedCards);
+        return toResponse(savedClone, userId, savedCards);
     }
 
     @Transactional
     public DeckResponse rateDeck(Long userId, Long deckId, RatingRequest request) {
-        User user = findUser(userId);
-        Deck deck = findDeck(deckId);
-        if (!deck.getPublished()) {
-            throw new ForbiddenOperationException("Only published decks can be rated");
-        }
+        Deck deck = findDeckWithRelations(deckId);
+        Deck ratingTarget = ratingTarget(deck);
+        requireCanRate(userId, ratingTarget);
 
-        DeckRating rating = deckRatingRepository.findByUserIdAndDeckId(userId, deckId)
+        DeckRating rating = deckRatingRepository.findByUserIdAndDeckId(userId, ratingTarget.getId())
                 .orElseGet(DeckRating::new);
-        rating.setUser(user);
-        rating.setDeck(deck);
+        rating.setUser(userRepository.getReferenceById(userId));
+        rating.setDeck(ratingTarget);
         rating.setValue(request.value());
         deckRatingRepository.save(rating);
 
-        deck.setRating(deckRatingRepository.getAverageRating(deckId));
-        deck.setRatingsCount((int) deckRatingRepository.countByDeckId(deckId));
+        recalculateRating(ratingTarget);
 
-        return toResponse(deck);
+        return toResponse(deck, userId);
+    }
+
+    @Transactional
+    public DeckResponse removeRating(Long userId, Long deckId) {
+        Deck deck = findDeckWithRelations(deckId);
+        Deck ratingTarget = ratingTarget(deck);
+        requireCanRate(userId, ratingTarget);
+
+        deckRatingRepository.deleteByUserIdAndDeckId(userId, ratingTarget.getId());
+        recalculateRating(ratingTarget);
+
+        return toResponse(deck, userId);
     }
 
     @Transactional
     public void deleteDeck(Long userId, Long deckId) {
-        Deck deck = findDeck(deckId);
+        Deck deck = findDeckWithRelations(deckId);
         requireOwner(deck, userId);
         deckRatingRepository.deleteByDeckId(deckId);
+        deckRepository.clearSourceDeckReferences(deckId);
         flashcardProgressRepository.deleteByFlashcardDeckId(deckId);
         flashcardRepository.deleteByDeckId(deckId);
         deckRepository.delete(deck);
     }
 
-    private DeckResponse toResponse(Deck deck) {
+    private DeckResponse toResponse(Deck deck, Long currentUserId) {
         List<Flashcard> cards = flashcardRepository.findByDeckIdOrderByIdAsc(deck.getId());
-        return deckMapper.toDeckResponse(deck, cards);
+        return toResponse(deck, currentUserId, cards);
+    }
+
+    private List<DeckResponse> toResponses(List<Deck> decks, Long currentUserId) {
+        if (decks.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, List<Flashcard>> cardsByDeckId = flashcardRepository.findByDeckIdInOrderByDeckIdAscIdAsc(
+                        decks.stream().map(Deck::getId).toList()
+                ).stream()
+                .collect(Collectors.groupingBy(card -> card.getDeck().getId()));
+        Map<Long, Integer> ratingsByTargetId = userRatingsByTargetId(decks, currentUserId);
+
+        return decks.stream()
+                .map(deck -> toResponse(
+                        deck,
+                        currentUserId,
+                        cardsByDeckId.getOrDefault(deck.getId(), List.of()),
+                        ratingsByTargetId
+                ))
+                .toList();
+    }
+
+    private DeckResponse toResponse(Deck deck, Long currentUserId, List<Flashcard> cards) {
+        return toResponse(deck, currentUserId, cards, userRatingsByTargetId(List.of(deck), currentUserId));
+    }
+
+    private DeckResponse toResponse(
+            Deck deck,
+            Long currentUserId,
+            List<Flashcard> cards,
+            Map<Long, Integer> ratingsByTargetId
+    ) {
+        Deck ratingTarget = ratingTargetOrNull(deck);
+        Integer userRating = currentUserId == null || ratingTarget == null
+                ? null
+                : ratingsByTargetId.get(ratingTarget.getId());
+        boolean canRate = currentUserId != null
+                && ratingTarget != null
+                && !ratingTarget.getAuthor().getId().equals(currentUserId);
+        return deckMapper.toDeckResponse(deck, cards, ratingTarget, userRating, canRate);
+    }
+
+    private Map<Long, Integer> userRatingsByTargetId(List<Deck> decks, Long currentUserId) {
+        if (currentUserId == null || decks.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> ratingTargetIds = decks.stream()
+                .map(this::ratingTargetOrNull)
+                .filter(target -> target != null)
+                .map(Deck::getId)
+                .distinct()
+                .toList();
+        if (ratingTargetIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return deckRatingRepository.findByUserIdAndDeckIdIn(currentUserId, ratingTargetIds).stream()
+                .collect(Collectors.toMap(rating -> rating.getDeck().getId(), DeckRating::getValue));
     }
 
     private List<Flashcard> saveCards(Deck deck, DeckRequest request) {
         List<Flashcard> cards = request.cards().stream()
                 .map(cardRequest -> deckMapper.toFlashcard(cardRequest, deck))
+                .toList();
+        return flashcardRepository.saveAll(cards);
+    }
+
+    private List<Flashcard> syncCards(Deck deck, DeckRequest request) {
+        List<Flashcard> existingCards = flashcardRepository.findByDeckIdOrderByIdAsc(deck.getId());
+        Map<Long, Flashcard> existingCardsById = existingCards.stream()
+                .collect(Collectors.toMap(Flashcard::getId, Function.identity()));
+        Set<Long> requestedExistingIds = request.cards().stream()
+                .map(cardRequest -> cardRequest.id())
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+
+        List<Long> removedCardIds = existingCards.stream()
+                .map(Flashcard::getId)
+                .filter(id -> !requestedExistingIds.contains(id))
+                .toList();
+        if (!removedCardIds.isEmpty()) {
+            flashcardProgressRepository.deleteByFlashcardIdIn(removedCardIds);
+            flashcardRepository.deleteByIdIn(removedCardIds);
+        }
+
+        List<Flashcard> cards = request.cards().stream()
+                .map(cardRequest -> {
+                    if (cardRequest.id() == null) {
+                        return deckMapper.toFlashcard(cardRequest, deck);
+                    }
+                    Flashcard existingCard = existingCardsById.get(cardRequest.id());
+                    if (existingCard == null) {
+                        throw new ForbiddenOperationException("Cannot update a card from another deck");
+                    }
+                    deckMapper.applyFlashcardFields(cardRequest, existingCard);
+                    return existingCard;
+                })
                 .toList();
         return flashcardRepository.saveAll(cards);
     }
@@ -194,13 +322,43 @@ public class DeckService {
         return clone;
     }
 
+    private Deck ratingTarget(Deck deck) {
+        Deck ratingTarget = ratingTargetOrNull(deck);
+        if (ratingTarget == null) {
+            throw new ForbiddenOperationException("Only published catalog decks can be rated");
+        }
+        return ratingTarget;
+    }
+
+    private Deck ratingTargetOrNull(Deck deck) {
+        if (deck.getPublished()) {
+            return deck;
+        }
+        Deck sourceDeck = deck.getSourceDeck();
+        if (sourceDeck != null && sourceDeck.getPublished()) {
+            return sourceDeck;
+        }
+        return null;
+    }
+
+    private void requireCanRate(Long userId, Deck ratingTarget) {
+        if (ratingTarget.getAuthor().getId().equals(userId)) {
+            throw new ForbiddenOperationException("Deck author cannot rate this deck");
+        }
+    }
+
+    private void recalculateRating(Deck deck) {
+        deck.setRating(deckRatingRepository.getAverageRating(deck.getId()));
+        deck.setRatingsCount((int) deckRatingRepository.countByDeckId(deck.getId()));
+    }
+
     private User findUser(Long userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("User not found"));
     }
 
-    private Deck findDeck(Long deckId) {
-        return deckRepository.findById(deckId)
+    private Deck findDeckWithRelations(Long deckId) {
+        return deckRepository.findWithRelationsById(deckId)
                 .orElseThrow(() -> new NotFoundException("Deck not found"));
     }
 

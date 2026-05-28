@@ -22,13 +22,17 @@ public class DeckMapper {
     public Flashcard toFlashcard(FlashcardRequest request, Deck deck) {
         Flashcard flashcard = new Flashcard();
         flashcard.setDeck(deck);
+        applyFlashcardFields(request, flashcard);
+        return flashcard;
+    }
+
+    public void applyFlashcardFields(FlashcardRequest request, Flashcard flashcard) {
         flashcard.setEnglishWord(request.englishWord().trim());
         flashcard.setTranslation(request.translation().trim());
         flashcard.setTranscription(trimToNull(request.transcription()));
         flashcard.setExampleSentence(trimToNull(request.exampleSentence()));
         flashcard.setPhraseType(request.phraseType());
         flashcard.setDifficulty(request.difficulty());
-        return flashcard;
     }
 
     public FlashcardResponse toFlashcardResponse(Flashcard flashcard) {
@@ -44,9 +48,21 @@ public class DeckMapper {
     }
 
     public DeckResponse toDeckResponse(Deck deck, List<Flashcard> cards) {
+        return toDeckResponse(deck, cards, deck, null, false);
+    }
+
+    public DeckResponse toDeckResponse(
+            Deck deck,
+            List<Flashcard> cards,
+            Deck ratingDeck,
+            Integer userRating,
+            boolean canRate
+    ) {
         List<FlashcardResponse> cardResponses = cards.stream()
                 .map(this::toFlashcardResponse)
                 .toList();
+        Deck sourceDeck = deck.getSourceDeck();
+        Deck effectiveRatingDeck = ratingDeck == null ? deck : ratingDeck;
 
         return new DeckResponse(
                 deck.getId(),
@@ -54,11 +70,17 @@ public class DeckMapper {
                 deck.getDescription(),
                 deck.getAuthor().getId(),
                 deck.getAuthor().getName(),
+                sourceDeck == null ? null : sourceDeck.getId(),
+                sourceDeck == null ? null : sourceDeck.getName(),
+                sourceDeck == null ? null : sourceDeck.getAuthor().getName(),
                 deck.getPublished(),
                 deck.getLevel(),
                 List.copyOf(deck.getTags()),
-                deck.getRating(),
-                deck.getRatingsCount(),
+                effectiveRatingDeck.getRating(),
+                effectiveRatingDeck.getRatingsCount(),
+                ratingDeck == null ? null : ratingDeck.getId(),
+                userRating,
+                canRate,
                 deck.getClonesCount(),
                 deck.getCreatedAt(),
                 toMetrics(cards),

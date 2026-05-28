@@ -48,9 +48,11 @@ public class DeckController {
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String level,
             @RequestParam(required = false) String tag,
+            @AuthenticationPrincipal UserPrincipal principal,
             @PageableDefault(size = 12, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
-        return deckService.searchPublishedDecks(query, level, tag, pageable);
+        Long userId = principal == null ? null : principal.getId();
+        return deckService.searchPublishedDecks(query, level, tag, userId, pageable);
     }
 
     @GetMapping("/{deckId}")
@@ -104,6 +106,14 @@ public class DeckController {
             @Valid @RequestBody RatingRequest request
     ) {
         return deckService.rateDeck(principal.getId(), deckId, request);
+    }
+
+    @DeleteMapping("/{deckId}/rating")
+    public DeckResponse removeRating(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable @Positive Long deckId
+    ) {
+        return deckService.removeRating(principal.getId(), deckId);
     }
 
     @DeleteMapping("/{deckId}")

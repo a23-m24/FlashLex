@@ -1,9 +1,7 @@
 package ru.isu.backend.service;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,7 +20,6 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final UserMapper userMapper;
 
@@ -30,11 +27,15 @@ public class AuthService {
     public AuthResponse register(RegisterRequest request) {
         String email = request.email().trim().toLowerCase();
         if (userRepository.existsByEmail(email)) {
-            throw new DuplicateResourceException("Email is already registered");
+            throw new DuplicateResourceException("Email уже используется");
+        }
+        String name = request.name().trim();
+        if (userRepository.existsByNameIgnoreCase(name)) {
+            throw new DuplicateResourceException("Имя уже занято");
         }
 
         User user = new User();
-        user.setName(request.name().trim());
+        user.setName(name);
         user.setEmail(email);
         user.setPasswordHash(passwordEncoder.encode(request.password()));
         user.setDailyNewLimit(request.dailyNewLimit());
@@ -47,16 +48,11 @@ public class AuthService {
     @Transactional(readOnly = true)
     public AuthResponse login(LoginRequest request) {
         String email = request.email().trim().toLowerCase();
-        try {
-            authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(email, request.password())
-            );
-        } catch (BadCredentialsException exception) {
-            throw new BadCredentialsException("Invalid email or password");
-        }
-
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BadCredentialsException("Invalid email or password"));
+        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            throw new BadCredentialsException("Invalid email or password");
+        }
         return toAuthResponse(user);
     }
 

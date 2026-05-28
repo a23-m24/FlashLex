@@ -51,10 +51,22 @@ public class JwtService {
         return (String) payload.get("sub");
     }
 
-    public boolean isValid(String token, UserPrincipal principal) {
+    public Long extractUserId(String token) {
+        Map<String, Object> payload = verifyAndReadPayload(token);
+        Object value = payload.get("uid");
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            return Long.valueOf(text);
+        }
+        return null;
+    }
+
+    public boolean isValid(String token) {
         try {
-            Map<String, Object> payload = verifyAndReadPayload(token);
-            return principal.getUsername().equals(payload.get("sub"));
+            verifyAndReadPayload(token);
+            return true;
         } catch (RuntimeException exception) {
             return false;
         }

@@ -2,6 +2,11 @@ import { CalendarCheck2 } from 'lucide-react'
 import { ProgressBar } from '../../shared/ui/ProgressBar'
 
 export function DailyGoalWidget({ reviewed, learned, reviewLimit, newLimit }) {
+  const visibleReviewed = Math.min(reviewed, reviewLimit)
+  const visibleLearned = Math.min(learned, newLimit)
+  const extraReviewed = Math.max(0, reviewed - reviewLimit)
+  const extraLearned = Math.max(0, learned - newLimit)
+
   return (
     <section className="panel goal-widget">
       <div className="section-heading">
@@ -11,8 +16,8 @@ export function DailyGoalWidget({ reviewed, learned, reviewLimit, newLimit }) {
         </div>
         <CalendarCheck2 aria-hidden="true" size={24} />
       </div>
-      <ProgressBar label="Повторить" max={reviewLimit} value={reviewed} />
-      <ProgressBar label="Новые" max={newLimit} value={learned} />
+      <ProgressBar extra={extraReviewed} label="Повторить" max={reviewLimit} value={visibleReviewed} />
+      <ProgressBar extra={extraLearned} label="Новые" max={newLimit} value={visibleLearned} />
     </section>
   )
 }

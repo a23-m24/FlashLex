@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -17,7 +18,10 @@ import java.time.LocalDateTime;
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "users")
+@Table(
+        name = "users",
+        indexes = @Index(name = "idx_users_name", columnList = "name")
+)
 public class User {
 
     @Id
@@ -32,9 +36,6 @@ public class User {
 
     @Column(nullable = false)
     private String passwordHash;
-
-    @Column(nullable = false, length = 40)
-    private String role = "LEARNER_AUTHOR";
 
     @Column(nullable = false)
     private Integer dailyNewLimit = 10;

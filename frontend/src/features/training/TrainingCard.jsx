@@ -30,6 +30,14 @@ const getAnswer = (card, directionMode) => {
   return card.translation
 }
 
+const normalizeTextAnswer = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[.,!?;:()[\]{}"«»'`´]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
 export function TrainingCard({
   answerMode,
   answerOptions = [],
@@ -44,11 +52,11 @@ export function TrainingCard({
   const [isChecked, setIsChecked] = useState(false)
   const prompt = getPrompt(card, directionMode)
   const answer = getAnswer(card, directionMode)
-  const normalizedAnswer = answer.toLowerCase().trim()
-  const typedAnswer = textAnswer.toLowerCase().trim()
+  const normalizedAnswer = normalizeTextAnswer(answer)
+  const typedAnswer = normalizeTextAnswer(textAnswer)
   const hasTypedAnswer = answerMode === 'TEXT_INPUT' && Boolean(typedAnswer)
   const canGrade = answerMode === 'SELF_CHECK' ? revealed : isChecked
-  const isTextMatch = hasTypedAnswer && normalizedAnswer.includes(typedAnswer)
+  const isTextMatch = hasTypedAnswer && normalizedAnswer === typedAnswer
   const reviewOptions = useMemo(
     () => getReviewOptions(cardProgress, answerOptions),
     [answerOptions, cardProgress],
@@ -80,6 +88,14 @@ export function TrainingCard({
             setTextAnswer(event.target.value)
             setIsChecked(false)
           }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              if (hasTypedAnswer) {
+                setIsChecked(true)
+              }
+            }
+          }}
           placeholder={
             directionMode === 'REVERSE_TRANSLATION'
               ? 'Введите английский вариант'
@@ -109,7 +125,7 @@ export function TrainingCard({
             <p>{card.exampleSentence}</p>
             {hasTypedAnswer ? (
               <span className={isTextMatch ? 'text-success' : 'text-warning'}>
-                {isTextMatch ? 'Ответ близок к верному' : 'Сверьте ответ и оцените качество'}
+                {isTextMatch ? 'Правильно' : 'Неправильно'}
               </span>
             ) : null}
           </div>

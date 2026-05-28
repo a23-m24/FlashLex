@@ -1,88 +1,106 @@
 package ru.isu.backend.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import ru.isu.backend.model.FlashcardProgress;
 import ru.isu.backend.model.LearningStatus;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 public interface FlashcardProgressRepository extends JpaRepository<FlashcardProgress, Long> {
 
-    Optional<FlashcardProgress> findByUserIdAndFlashcardId(Long userId, Long flashcardId);
-
-    List<FlashcardProgress> findByUserId(Long userId);
-
-    List<FlashcardProgress> findByUserIdAndFlashcardDeckAuthorId(Long userId, Long authorId);
-
-    void deleteByFlashcardDeckId(Long deckId);
-
-    List<FlashcardProgress> findByNextReviewAtIsNull();
-
-    long countByUserIdAndStatus(Long userId, LearningStatus status);
-
     @Query("""
             select p
             from FlashcardProgress p
+            join fetch p.flashcard
             where p.user.id = :userId
-              and p.nextReviewDate <= :date
-            order by p.nextReviewDate asc
+              and p.flashcard.id = :flashcardId
             """)
-    List<FlashcardProgress> findDueProgress(
+    Optional<FlashcardProgress> findByUserIdAndFlashcardId(
             @Param("userId") Long userId,
-            @Param("date") LocalDate date
+            @Param("flashcardId") Long flashcardId
     );
 
     @Query("""
             select p
             from FlashcardProgress p
+            join fetch p.flashcard
+            where p.user.id = :userId
+            """)
+    List<FlashcardProgress> findByUserId(@Param("userId") Long userId);
+
+    @Modifying
+    @Query("delete from FlashcardProgress p where p.flashcard.deck.id = :deckId")
+    void deleteByFlashcardDeckId(@Param("deckId") Long deckId);
+
+    @Modifying
+    @Query("delete from FlashcardProgress p where p.flashcard.id in :flashcardIds")
+    void deleteByFlashcardIdIn(@Param("flashcardIds") List<Long> flashcardIds);
+
+    @Query("""
+            select count(p)
+            from FlashcardProgress p
             where p.user.id = :userId
               and p.flashcard.deck.id = :deckId
-              and (
-                   p.nextReviewAt is null
-                   or (p.status in :learningStatuses and p.nextReviewAt <= :now)
-                   or (p.status in :reviewStatuses and p.nextReviewDate <= :today)
-              )
-            order by
-              case when p.status in :learningStatuses then 0 else 1 end,
-              p.nextReviewAt asc,
-              p.nextReviewDate asc,
-              p.id asc
+              and p.status = :status
             """)
-    List<FlashcardProgress> findDueProgressInDeck(
+    long countByUserAndDeckAndStatus(
             @Param("userId") Long userId,
             @Param("deckId") Long deckId,
-            @Param("now") LocalDateTime now,
-            @Param("today") LocalDate today,
-            @Param("learningStatuses") List<LearningStatus> learningStatuses,
-            @Param("reviewStatuses") List<LearningStatus> reviewStatuses
+            @Param("status") LearningStatus status
     );
 
     @Query("""
-            select p
+            select count(p)
             from FlashcardProgress p
             where p.user.id = :userId
               and p.flashcard.deck.id = :deckId
+              and p.status = :status
+              and p.nextReviewDate <= :today
             """)
-    List<FlashcardProgress> findByUserAndDeck(
+    long countDueReviewByUserAndDeck(
             @Param("userId") Long userId,
-            @Param("deckId") Long deckId
+            @Param("deckId") Long deckId,
+            @Param("status") LearningStatus status,
+            @Param("today") LocalDate today
     );
 
     @Query("""
             select p
             from FlashcardProgress p
+            join fetch p.flashcard
             where p.user.id = :userId
-              and (p.correctAnswers + p.wrongAnswers) > 0
-              and p.wrongAnswers * 1.0 / (p.correctAnswers + p.wrongAnswers) >= :minWrongRate
-            order by (p.wrongAnswers * 1.0 / (p.correctAnswers + p.wrongAnswers)) desc
+              and p.flashcard.deck.id = :deckId
+              and p.status = :status
+              and p.nextReviewDate <= :today
+            order by p.nextReviewAt asc, p.id asc
+            limit 1
             """)
-    List<FlashcardProgress> findWeakProgress(
+    Optional<FlashcardProgress> findFirstDueReviewByUserAndDeck(
             @Param("userId") Long userId,
-            @Param("minWrongRate") double minWrongRate
+            @Param("deckId") Long deckId,
+            @Param("status") LearningStatus status,
+            @Param("today") LocalDate today
     );
+
+    @Query("""
+            select p
+            from FlashcardProgress p
+            join fetch p.flashcard
+            where p.user.id = :userId
+              and p.flashcard.deck.id = :deckId
+              and p.status = :status
+            order by p.nextReviewAt asc, p.id asc
+            limit 1
+            """)
+    Optional<FlashcardProgress> findFirstLearningByUserAndDeck(
+            @Param("userId") Long userId,
+            @Param("deckId") Long deckId,
+            @Param("status") LearningStatus status
+    );
+
 }
