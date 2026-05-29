@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.isu.backend.dto.request.AnswerCardRequest;
+import ru.isu.backend.dto.response.AnswerCardResponse;
 import ru.isu.backend.dto.response.DailyStatsResponse;
 import ru.isu.backend.dto.response.LeaderboardRowResponse;
 import ru.isu.backend.dto.response.ProgressResponse;
@@ -35,7 +36,7 @@ public class LearningController {
     }
 
     @PostMapping("/progress/answers")
-    public ProgressResponse answer(
+    public AnswerCardResponse answer(
             @AuthenticationPrincipal UserPrincipal principal,
             @Valid @RequestBody AnswerCardRequest request
     ) {

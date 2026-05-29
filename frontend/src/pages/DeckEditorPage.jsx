@@ -5,7 +5,7 @@ import { getDeckCards } from '../shared/lib/metrics'
 
 export function DeckEditorPage() {
   const { deckId } = useParams()
-  const { decks, flashcards, createDeck, updateDeck } = useFlashLex()
+  const { user, decks, flashcards, createDeck, updateDeck } = useFlashLex()
   const navigate = useNavigate()
   const deck = deckId ? decks.find((item) => item.id === deckId) : null
   const cards = deck ? getDeckCards(flashcards, deck.id) : []
@@ -23,7 +23,17 @@ export function DeckEditorPage() {
 
   return (
     <div className="page-stack">
-      <DeckForm initialCards={cards} initialDeck={deck} onSubmit={handleSubmit} />
+      <DeckForm
+        initialCards={cards}
+        initialDeck={deck}
+        onSubmit={handleSubmit}
+        publicationDisabled={Boolean(user.publicationBanned && !deck?.isPublished)}
+        publicationHint={
+          user.publicationBanned && !deck?.isPublished
+            ? 'Администратор временно запретил публикацию ваших наборов.'
+            : ''
+        }
+      />
     </div>
   )
 }

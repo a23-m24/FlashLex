@@ -16,6 +16,7 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.DynamicUpdate;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -24,11 +25,13 @@ import java.time.LocalDateTime;
 @Setter
 @NoArgsConstructor
 @Entity
+@DynamicUpdate
 @Table(
         name = "flashcard_progress",
         uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "flashcard_id"}),
         indexes = {
                 @Index(name = "idx_progress_user_status_date", columnList = "user_id, status, next_review_date"),
+                @Index(name = "idx_progress_user_status_due", columnList = "user_id, status, next_review_date, next_review_at, id"),
                 @Index(name = "idx_progress_flashcard", columnList = "flashcard_id")
         }
 )

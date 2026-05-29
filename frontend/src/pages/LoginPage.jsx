@@ -8,8 +8,8 @@ import { Input } from '../shared/ui/Input'
 export function LoginPage() {
   const { login } = useFlashLex()
   const navigate = useNavigate()
-  const [email, setEmail] = useState('student@flashlex.local')
-  const [password, setPassword] = useState('password')
+  const [email, setEmail] = useState('student@flashlex.test')
+  const [password, setPassword] = useState('demo12345')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 

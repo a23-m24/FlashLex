@@ -5,7 +5,7 @@ import { SessionSummary } from '../features/training/SessionSummary'
 import { TrainingCard } from '../features/training/TrainingCard'
 import { isDue } from '../shared/lib/date'
 import { getProgress } from '../shared/lib/metrics'
-import { isLearningStatus, isReviewStatus } from '../shared/lib/queue'
+import { isLearningDue, isReviewStatus } from '../shared/lib/queue'
 import { Button } from '../shared/ui/Button'
 import { EmptyState } from '../shared/ui/EmptyState'
 import { LinkButton } from '../shared/ui/LinkButton'
@@ -102,7 +102,7 @@ function TrainingSessionContent({
       if (!cardProgress) {
         newCount += 1
         newItems.push({ card, progress: null })
-      } else if (isLearningStatus(cardProgress.status)) {
+      } else if (isLearningDue(cardProgress)) {
         learningCount += 1
         learningItems.push({ card, progress: cardProgress })
       } else if (isReviewStatus(cardProgress.status) && isDue(cardProgress.nextReviewDate || cardProgress.nextReviewAt)) {
@@ -271,9 +271,7 @@ function TrainingSessionContent({
       }))
       const wasExtraNewCard = isLimitedExtraSession && !activeEntry.progress
       const wasExtraReviewCard =
-        isLimitedExtraSession &&
-        isReviewStatus(activeEntry.progress?.status) &&
-        isDue(activeEntry.progress.nextReviewDate || activeEntry.progress.nextReviewAt)
+        isLimitedExtraSession && isReviewStatus(activeEntry.progress?.status)
       const nextExtraAnswered = isLimitedExtraSession ? extraAnswered + 1 : extraAnswered
       const nextExtraNewAnswered = wasExtraNewCard ? extraNewAnswered + 1 : extraNewAnswered
       const nextExtraReviewAnswered = wasExtraReviewCard
@@ -302,8 +300,19 @@ function TrainingSessionContent({
           : queueMode === 'EXTRA_MIXED' && nextExtraNewLimit + nextExtraReviewLimit <= 0
 
       if (isLimitedExtraSession && extraLimitsAreSpent) {
-        const learningCheckEntry = await getNextTrainingCard(deckId, 'GOAL', 0, 0, 0)
-        setEntry(learningCheckEntry)
+        setEntry({
+          ...activeEntry,
+          card: null,
+          progress: null,
+          finished: true,
+          dueNowCount: 0,
+          newCount: 0,
+          learningCount: 0,
+          reviewCount: 0,
+          newBufferCount: 0,
+          reviewBufferCount: 0,
+          answerOptions: [],
+        })
       } else {
         const nextEntry = await getNextTrainingCard(
           deckId,

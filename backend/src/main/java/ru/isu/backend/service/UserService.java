@@ -29,16 +29,12 @@ public class UserService {
         User user = findUser(userId);
         String name = request.name().trim();
         String email = request.email().trim().toLowerCase();
-        userRepository.findByNameIgnoreCase(name)
-                .filter(found -> !found.getId().equals(userId))
-                .ifPresent(found -> {
-                    throw new DuplicateResourceException("Имя уже занято");
-                });
-        userRepository.findByEmail(email)
-                .filter(found -> !found.getId().equals(userId))
-                .ifPresent(found -> {
-                    throw new DuplicateResourceException("Email уже используется");
-                });
+        if (userRepository.existsByNameIgnoreCaseAndIdNot(name, userId)) {
+            throw new DuplicateResourceException("Имя уже занято");
+        }
+        if (userRepository.existsByEmailAndIdNot(email, userId)) {
+            throw new DuplicateResourceException("Email уже используется");
+        }
 
         user.setName(name);
         user.setEmail(email);

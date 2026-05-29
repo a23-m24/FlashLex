@@ -11,6 +11,34 @@ import java.util.Optional;
 
 public interface DailyUserStatsRepository extends JpaRepository<DailyUserStats, Long> {
 
+    interface LeaderboardStatsView {
+        Long getUserId();
+
+        String getUserName();
+
+        Integer getDailyNewLimit();
+
+        Integer getDailyReviewLimit();
+
+        LocalDate getDate();
+
+        Integer getReviewed();
+
+        Integer getLearned();
+
+        Integer getCorrect();
+
+        Integer getPoints();
+
+        Integer getStreakDays();
+    }
+
+    interface DailyGoalStatsView {
+        Integer getReviewed();
+
+        Integer getLearned();
+    }
+
     @Query("""
             select s
             from DailyUserStats s
@@ -18,6 +46,18 @@ public interface DailyUserStatsRepository extends JpaRepository<DailyUserStats, 
               and s.date = :date
             """)
     Optional<DailyUserStats> findByUserIdAndDate(
+            @Param("userId") Long userId,
+            @Param("date") LocalDate date
+    );
+
+    @Query("""
+            select s.reviewed as reviewed,
+                   s.learned as learned
+            from DailyUserStats s
+            where s.user.id = :userId
+              and s.date = :date
+            """)
+    Optional<DailyGoalStatsView> findGoalStatsByUserIdAndDate(
             @Param("userId") Long userId,
             @Param("date") LocalDate date
     );
@@ -35,15 +75,21 @@ public interface DailyUserStatsRepository extends JpaRepository<DailyUserStats, 
             @Param("date") LocalDate date
     );
 
-    List<DailyUserStats> findByDate(LocalDate date);
-
     @Query("""
-            select s
+            select s.user.id as userId,
+                   s.user.name as userName,
+                   s.user.dailyNewLimit as dailyNewLimit,
+                   s.user.dailyReviewLimit as dailyReviewLimit,
+                   s.date as date,
+                   s.reviewed as reviewed,
+                   s.learned as learned,
+                   s.correct as correct,
+                   s.points as points,
+                   s.streakDays as streakDays
             from DailyUserStats s
-            join fetch s.user
             where s.date between :startDate and :endDate
             """)
-    List<DailyUserStats> findByDateBetween(
+    List<LeaderboardStatsView> findLeaderboardStatsBetween(
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );

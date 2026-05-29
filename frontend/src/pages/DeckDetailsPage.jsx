@@ -1,4 +1,5 @@
 import { Copy, Download, Edit, Globe2, Play, Star, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useFlashLex } from '../features/auth/useFlashLex'
 import {
@@ -22,23 +23,53 @@ export function DeckDetailsPage() {
     progress,
     cloneDeck,
     deleteDeck,
+    loadDeck,
     publishDeck,
     rateDeck,
     removeDeckRating,
   } = useFlashLex()
   const navigate = useNavigate()
+  const [loadError, setLoadError] = useState({ deckId: null, message: '' })
   const deck = decks.find((item) => item.id === deckId)
+  const cards = useMemo(
+    () => (deck ? getDeckCards(flashcards, deck.id) : []),
+    [deck, flashcards],
+  )
+  const needsFullDeck = Boolean(
+    deck && (deck.metrics?.cardCount || 0) > cards.length,
+  )
+  const activeLoadError = loadError.deckId === deckId ? loadError.message : ''
+
+  useEffect(() => {
+    let cancelled = false
+    if (!deckId || (deck && !needsFullDeck)) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    loadDeck(deckId)
+      .catch((error) => {
+        if (!cancelled) {
+          setLoadError({ deckId, message: error.message })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [deck, deckId, loadDeck, needsFullDeck])
 
   if (!deck) {
     return (
       <section className="panel centered-panel">
-        <h1>Набор не найден</h1>
+        <h1>{activeLoadError ? 'Набор не найден' : 'Загрузка набора'}</h1>
+        {activeLoadError ? <p className="field__error">{activeLoadError}</p> : null}
         <LinkButton to="/">Вернуться к наборам</LinkButton>
       </section>
     )
   }
 
-  const cards = getDeckCards(flashcards, deck.id)
   const summary = getStatusSummary(cards, progress)
   const isOwner = deck.authorId === user.id
   const ownedClone = decks.find((item) => item.authorId === user.id && item.sourceDeckId === deck.id)
@@ -111,7 +142,7 @@ export function DeckDetailsPage() {
               <LinkButton icon={Edit} to={`/decks/${deck.id}/edit`} variant="secondary">
                 Изменить
               </LinkButton>
-              {!deck.isPublished ? (
+              {!deck.isPublished && !user.publicationBanned ? (
                 <Button icon={Globe2} onClick={() => publishDeck(deck.id)} variant="ghost">
                   Опубликовать
                 </Button>

@@ -14,6 +14,7 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.DynamicUpdate;
 
 import java.time.LocalDate;
 
@@ -21,6 +22,7 @@ import java.time.LocalDate;
 @Setter
 @NoArgsConstructor
 @Entity
+@DynamicUpdate
 @Table(
         name = "daily_user_stats",
         uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "date"}),

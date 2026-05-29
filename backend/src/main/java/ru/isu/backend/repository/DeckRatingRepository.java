@@ -11,16 +11,22 @@ import java.util.Optional;
 
 public interface DeckRatingRepository extends JpaRepository<DeckRating, Long> {
 
+    interface UserDeckRatingView {
+        Long getDeckId();
+
+        Integer getValue();
+    }
+
     Optional<DeckRating> findByUserIdAndDeckId(Long userId, Long deckId);
 
     @Query("""
-            select r
+            select r.deck.id as deckId,
+                   r.value as value
             from DeckRating r
-            join fetch r.deck
             where r.user.id = :userId
               and r.deck.id in :deckIds
             """)
-    List<DeckRating> findByUserIdAndDeckIdIn(
+    List<UserDeckRatingView> findValuesByUserIdAndDeckIdIn(
             @Param("userId") Long userId,
             @Param("deckIds") List<Long> deckIds
     );

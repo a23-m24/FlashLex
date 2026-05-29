@@ -47,10 +47,6 @@ public class DeckMapper {
         );
     }
 
-    public DeckResponse toDeckResponse(Deck deck, List<Flashcard> cards) {
-        return toDeckResponse(deck, cards, deck, null, false);
-    }
-
     public DeckResponse toDeckResponse(
             Deck deck,
             List<Flashcard> cards,

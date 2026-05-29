@@ -1,6 +1,8 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AppLayout } from '../layouts/AppLayout'
 import { AuthLayout } from '../layouts/AuthLayout'
+import { AdminDeckEditorPage } from '../pages/AdminDeckEditorPage'
+import { AdminPage } from '../pages/AdminPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { DeckDetailsPage } from '../pages/DeckDetailsPage'
 import { DeckEditorPage } from '../pages/DeckEditorPage'
@@ -35,6 +37,8 @@ export const router = createBrowserRouter([
       { path: '/training/session', element: <TrainingSessionPage /> },
       { path: '/stats', element: <StatsPage /> },
       { path: '/leaderboard', element: <LeaderboardPage /> },
+      { path: '/admin', element: <AdminPage /> },
+      { path: '/admin/decks/:deckId/edit', element: <AdminDeckEditorPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],
   },

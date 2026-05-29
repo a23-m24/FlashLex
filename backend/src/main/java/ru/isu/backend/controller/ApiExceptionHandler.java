@@ -16,7 +16,6 @@ import ru.isu.backend.dto.response.ApiErrorResponse;
 import ru.isu.backend.exception.DuplicateResourceException;
 import ru.isu.backend.exception.ForbiddenOperationException;
 import ru.isu.backend.exception.NotFoundException;
-import ru.isu.backend.exception.UnauthorizedException;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -49,7 +48,7 @@ public class ApiExceptionHandler {
         return error(HttpStatus.CONFLICT, exception.getMessage(), request, Map.of());
     }
 
-    @ExceptionHandler({UnauthorizedException.class, BadCredentialsException.class})
+    @ExceptionHandler(BadCredentialsException.class)
     @ResponseStatus(HttpStatus.UNAUTHORIZED)
     public ApiErrorResponse handleUnauthorized(RuntimeException exception, HttpServletRequest request) {
         return error(HttpStatus.UNAUTHORIZED, exception.getMessage(), request, Map.of());

@@ -4,26 +4,27 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.isu.backend.dto.request.AnswerCardRequest;
+import ru.isu.backend.dto.response.AnswerCardResponse;
 import ru.isu.backend.dto.response.DailyStatsResponse;
+import ru.isu.backend.dto.response.FlashcardResponse;
 import ru.isu.backend.dto.response.LeaderboardRowResponse;
 import ru.isu.backend.dto.response.ProgressResponse;
 import ru.isu.backend.dto.response.TrainingNextResponse;
 import ru.isu.backend.exception.ForbiddenOperationException;
 import ru.isu.backend.exception.NotFoundException;
-import ru.isu.backend.mapper.DeckMapper;
 import ru.isu.backend.mapper.ProgressMapper;
 import ru.isu.backend.model.AnswerQuality;
 import ru.isu.backend.model.DailyUserStats;
-import ru.isu.backend.model.Deck;
-import ru.isu.backend.model.Flashcard;
 import ru.isu.backend.model.FlashcardProgress;
 import ru.isu.backend.model.LeaderboardPeriod;
 import ru.isu.backend.model.LearningStatus;
 import ru.isu.backend.model.TrainingQueueMode;
-import ru.isu.backend.model.User;
 import ru.isu.backend.repository.DailyUserStatsRepository;
+import ru.isu.backend.repository.DailyUserStatsRepository.DailyGoalStatsView;
+import ru.isu.backend.repository.DailyUserStatsRepository.LeaderboardStatsView;
 import ru.isu.backend.repository.DeckRepository;
 import ru.isu.backend.repository.FlashcardProgressRepository;
+import ru.isu.backend.repository.FlashcardProgressRepository.TrainingProgressCardView;
 import ru.isu.backend.repository.FlashcardRepository;
 import ru.isu.backend.repository.UserRepository;
 
@@ -46,13 +47,10 @@ public class LearningService {
     private final FlashcardProgressRepository progressRepository;
     private final DailyUserStatsRepository statsRepository;
     private final ProgressMapper progressMapper;
-    private final DeckMapper deckMapper;
     private final CyclicTrainingScheduler trainingScheduler;
 
     public List<ProgressResponse> getProgress(Long userId) {
-        return progressRepository.findByUserId(userId).stream()
-                .map(progressMapper::toProgressResponse)
-                .toList();
+        return progressRepository.findResponsesByUserId(userId);
     }
 
     @Transactional
@@ -78,20 +76,16 @@ public class LearningService {
                 .toList();
     }
 
-    public List<LeaderboardRowResponse> getLeaderboard() {
-        return getLeaderboard(LeaderboardPeriod.DAY);
-    }
-
     public List<LeaderboardRowResponse> getLeaderboard(LeaderboardPeriod period) {
         LocalDate today = LocalDate.now();
         LocalDate startDate = period == LeaderboardPeriod.WEEK ? today.minusDays(6) : today;
-        Map<Long, List<DailyUserStats>> statsByUser = new HashMap<>();
-        statsRepository.findByDateBetween(startDate, today).forEach(stats ->
-                statsByUser.computeIfAbsent(stats.getUser().getId(), ignored -> new java.util.ArrayList<>()).add(stats)
+        Map<Long, List<LeaderboardStatsView>> statsByUser = new HashMap<>();
+        statsRepository.findLeaderboardStatsBetween(startDate, today).forEach(stats ->
+                statsByUser.computeIfAbsent(stats.getUserId(), ignored -> new java.util.ArrayList<>()).add(stats)
         );
 
         return statsByUser.values().stream()
-                .map(stats -> toLeaderboardRow(stats.get(0).getUser(), stats, today))
+                .map(this::toLeaderboardRow)
                 .sorted(Comparator.comparing(LeaderboardRowResponse::points).reversed())
                 .toList();
     }
@@ -126,29 +120,33 @@ public class LearningService {
         int effectiveExtraLimit = Math.max(0, nullToZero(extraLimit));
         int effectiveExtraNewLimit = Math.max(0, nullToZero(extraNewLimit));
         int effectiveExtraReviewLimit = Math.max(0, nullToZero(extraReviewLimit));
-        DeckRepository.TrainingDeckContext deck = deckRepository.findTrainingContextById(deckId)
+        LocalDateTime now = LocalDateTime.now();
+        LocalDate today = now.toLocalDate();
+        DeckRepository.TrainingSessionContext deck = deckRepository.findTrainingSessionContext(
+                        userId,
+                        deckId,
+                        LearningStatus.LEARNING.name(),
+                        LearningStatus.REVIEW.name(),
+                        today,
+                        now
+                )
                 .orElseThrow(() -> new NotFoundException("Deck not found"));
         if (!deck.getAuthorId().equals(userId)) {
             throw new ForbiddenOperationException("Only user's own decks can be trained");
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        LocalDate today = now.toLocalDate();
-        int newCount = safeLongToInt(flashcardRepository.countNewCardsInDeck(userId, deckId));
-        int learningCount = safeLongToInt(progressRepository.countByUserAndDeckAndStatus(
-                userId,
-                deckId,
-                LearningStatus.LEARNING
-        ));
-        int reviewDueTodayCount = safeLongToInt(progressRepository.countDueReviewByUserAndDeck(
-                userId,
-                deckId,
-                LearningStatus.REVIEW,
-                today
-        ));
-        DailyUserStats todayStats = statsRepository.findByUserIdAndDate(userId, now.toLocalDate()).orElse(null);
-        int remainingNewGoal = remainingGoal(deck.getDailyNewLimit(), todayStats == null ? 0 : todayStats.getLearned());
-        int remainingReviewGoal = remainingGoal(deck.getDailyReviewLimit(), todayStats == null ? 0 : todayStats.getReviewed());
+        int newCount = safeLongToInt(deck.getNewCount());
+        int learningCount = safeLongToInt(deck.getLearningCount());
+        int reviewDueTodayCount = safeLongToInt(deck.getReviewDueTodayCount());
+        DailyGoalStatsView todayStats = effectiveQueueMode == TrainingQueueMode.GOAL
+                ? statsRepository.findGoalStatsByUserIdAndDate(userId, today).orElse(null)
+                : null;
+        int remainingNewGoal = effectiveQueueMode == TrainingQueueMode.GOAL
+                ? remainingGoal(deck.getDailyNewLimit(), todayStats == null ? 0 : todayStats.getLearned())
+                : 0;
+        int remainingReviewGoal = effectiveQueueMode == TrainingQueueMode.GOAL
+                ? remainingGoal(deck.getDailyReviewLimit(), todayStats == null ? 0 : todayStats.getReviewed())
+                : 0;
         int visibleNewCount = visibleNewCount(
                 effectiveQueueMode,
                 newCount,
@@ -164,15 +162,16 @@ public class LearningService {
                 effectiveExtraReviewLimit
         );
 
-        FlashcardProgress selectedReview = effectiveQueueMode != TrainingQueueMode.EXTRA_NEW && visibleReviewCount > 0
-                ? progressRepository.findFirstDueReviewByUserAndDeck(userId, deckId, LearningStatus.REVIEW, today)
+        TrainingProgressCardView selectedReview = effectiveQueueMode != TrainingQueueMode.EXTRA_NEW && visibleReviewCount > 0
+                ? progressRepository.findFirstDueReviewCardByUserAndDeck(userId, deckId, LearningStatus.REVIEW, today)
                 .orElse(null)
                 : null;
         if (selectedReview != null) {
             return trainingNextResponse(
                     deckId,
-                    selectedReview.getFlashcard(),
-                    selectedReview,
+                    cardResponse(selectedReview),
+                    progressResponse(selectedReview),
+                    progressForScheduling(selectedReview),
                     visibleReviewCount,
                     visibleNewCount,
                     learningCount,
@@ -183,12 +182,13 @@ public class LearningService {
         }
 
         if (effectiveQueueMode != TrainingQueueMode.EXTRA_REVIEW && visibleNewCount > 0 && newCount > 0) {
-            Flashcard selectedNew = flashcardRepository.findFirstNewCardInDeck(userId, deckId)
+            FlashcardResponse selectedNew = flashcardRepository.findFirstNewCardResponseInDeck(userId, deckId)
                     .orElse(null);
             if (selectedNew != null) {
                 return trainingNextResponse(
                         deckId,
                         selectedNew,
+                        null,
                         null,
                         visibleReviewCount,
                         visibleNewCount,
@@ -200,15 +200,16 @@ public class LearningService {
             }
         }
 
-        FlashcardProgress selectedLearning = learningCount > 0
-                ? progressRepository.findFirstLearningByUserAndDeck(userId, deckId, LearningStatus.LEARNING)
+        TrainingProgressCardView selectedLearning = effectiveQueueMode == TrainingQueueMode.GOAL && learningCount > 0
+                ? progressRepository.findFirstLearningCardByUserAndDeck(userId, deckId, LearningStatus.LEARNING, now)
                 .orElse(null)
                 : null;
         if (selectedLearning != null) {
             return trainingNextResponse(
                     deckId,
-                    selectedLearning.getFlashcard(),
-                    selectedLearning,
+                    cardResponse(selectedLearning),
+                    progressResponse(selectedLearning),
+                    progressForScheduling(selectedLearning),
                     visibleReviewCount,
                     visibleNewCount,
                     learningCount,
@@ -234,19 +235,18 @@ public class LearningService {
     }
 
     @Transactional
-    public ProgressResponse answerCard(Long userId, AnswerCardRequest request) {
-        Flashcard card = flashcardRepository.findWithDeckAuthorById(request.flashcardId())
+    public AnswerCardResponse answerCard(Long userId, AnswerCardRequest request) {
+        FlashcardRepository.CardOwnerView card = flashcardRepository.findOwnerById(request.flashcardId())
                 .orElseThrow(() -> new NotFoundException("Flashcard not found"));
-        if (!card.getDeck().getAuthor().getId().equals(userId)) {
+        if (!card.getAuthorId().equals(userId)) {
             throw new ForbiddenOperationException("Only cards from user's decks can be trained");
         }
-        User user = card.getDeck().getAuthor();
 
         FlashcardProgress progress = progressRepository.findByUserIdAndFlashcardId(userId, card.getId())
                 .orElseGet(() -> {
                     FlashcardProgress created = new FlashcardProgress();
-                    created.setUser(user);
-                    created.setFlashcard(card);
+                    created.setUser(userRepository.getReferenceById(userId));
+                    created.setFlashcard(flashcardRepository.getReferenceById(card.getId()));
                     return created;
                 });
 
@@ -259,14 +259,25 @@ public class LearningService {
         progress.setWrongAnswers(progress.getWrongAnswers() + (correct ? 0 : 1));
         progress.setLastAnswerQuality(request.quality());
 
-        updateDailyStats(user, correct, wasNew, wasDueReview);
-        return progressMapper.toProgressResponse(progressRepository.save(progress));
+        DailyUserStats stats = updateDailyStats(
+                userId,
+                card.getDailyNewLimit(),
+                card.getDailyReviewLimit(),
+                correct,
+                wasNew,
+                wasDueReview
+        );
+        return new AnswerCardResponse(
+                progressMapper.toProgressResponse(progressRepository.save(progress)),
+                progressMapper.toDailyStatsResponse(stats)
+        );
     }
 
     private TrainingNextResponse trainingNextResponse(
             Long deckId,
-            Flashcard card,
-            FlashcardProgress progress,
+            FlashcardResponse card,
+            ProgressResponse progress,
+            FlashcardProgress schedulingProgress,
             int dueNowCount,
             int newCount,
             int learningCount,
@@ -276,8 +287,8 @@ public class LearningService {
     ) {
         return new TrainingNextResponse(
                 deckId,
-                deckMapper.toFlashcardResponse(card),
-                progress == null ? null : progressMapper.toProgressResponse(progress),
+                card,
+                progress,
                 false,
                 dueNowCount,
                 newCount,
@@ -285,8 +296,62 @@ public class LearningService {
                 reviewCount,
                 newBufferCount,
                 reviewBufferCount,
-                trainingScheduler.answerOptions(progress)
+                trainingScheduler.answerOptions(schedulingProgress)
         );
+    }
+
+    private FlashcardResponse cardResponse(TrainingProgressCardView progress) {
+        return new FlashcardResponse(
+                progress.getFlashcardId(),
+                progress.getEnglishWord(),
+                progress.getTranslation(),
+                progress.getTranscription(),
+                progress.getExampleSentence(),
+                progress.getPhraseType(),
+                progress.getDifficulty()
+        );
+    }
+
+    private ProgressResponse progressResponse(TrainingProgressCardView progress) {
+        return new ProgressResponse(
+                progress.getProgressId(),
+                progress.getUserId(),
+                progress.getFlashcardId(),
+                progress.getStatus(),
+                progress.getIntervalDays(),
+                progress.getIntervalMinutes(),
+                progress.getIntervalSeconds(),
+                progress.getEaseFactor(),
+                progress.getNextReviewDate(),
+                progress.getNextReviewAt(),
+                progress.getCorrectAnswers(),
+                progress.getWrongAnswers(),
+                progress.getRemainingSteps(),
+                progress.getLapseCount(),
+                progress.getLeeched(),
+                progress.getLastReviewedAt(),
+                progress.getLastAnswerQuality()
+        );
+    }
+
+    private FlashcardProgress progressForScheduling(TrainingProgressCardView progress) {
+        FlashcardProgress schedulingProgress = new FlashcardProgress();
+        schedulingProgress.setId(progress.getProgressId());
+        schedulingProgress.setStatus(progress.getStatus());
+        schedulingProgress.setIntervalDays(progress.getIntervalDays());
+        schedulingProgress.setIntervalMinutes(progress.getIntervalMinutes());
+        schedulingProgress.setIntervalSeconds(progress.getIntervalSeconds());
+        schedulingProgress.setEaseFactor(progress.getEaseFactor());
+        schedulingProgress.setNextReviewDate(progress.getNextReviewDate());
+        schedulingProgress.setNextReviewAt(progress.getNextReviewAt());
+        schedulingProgress.setCorrectAnswers(progress.getCorrectAnswers());
+        schedulingProgress.setWrongAnswers(progress.getWrongAnswers());
+        schedulingProgress.setRemainingSteps(progress.getRemainingSteps());
+        schedulingProgress.setLapseCount(progress.getLapseCount());
+        schedulingProgress.setLeeched(progress.getLeeched());
+        schedulingProgress.setLastReviewedAt(progress.getLastReviewedAt());
+        schedulingProgress.setLastAnswerQuality(progress.getLastAnswerQuality());
+        return schedulingProgress;
     }
 
     private int remainingGoal(Integer limit, Integer completed) {
@@ -297,7 +362,7 @@ public class LearningService {
         if (!ignoreGoal) {
             return Math.min(bufferCount, remainingGoal);
         }
-        return extraLimit > 0 ? Math.min(bufferCount, extraLimit) : bufferCount;
+        return Math.min(bufferCount, Math.max(0, extraLimit));
     }
 
     private int visibleNewCount(
@@ -330,35 +395,31 @@ public class LearningService {
         };
     }
 
-    private void updateDailyStats(User user, boolean correct, boolean learned, boolean reviewed) {
-        DailyUserStats stats = getOrCreateTodayStats(user, LocalDate.now());
+    private DailyUserStats updateDailyStats(
+            Long userId,
+            Integer dailyNewLimit,
+            Integer dailyReviewLimit,
+            boolean correct,
+            boolean learned,
+            boolean reviewed
+    ) {
+        DailyUserStats stats = getOrCreateTodayStats(userId, LocalDate.now());
         stats.setReviewed(stats.getReviewed() + (reviewed ? 1 : 0));
         stats.setLearned(stats.getLearned() + (learned ? 1 : 0));
         stats.setCorrect(stats.getCorrect() + (correct && (learned || reviewed) ? 1 : 0));
-        stats.setPoints(calculateLeaderboardScore(user, List.of(stats)).points());
+        stats.setPoints(calculateLeaderboardScore(dailyNewLimit, dailyReviewLimit, List.of(statsEntry(stats))).points());
+        return stats;
     }
 
     private int nullToZero(Integer value) {
         return value == null ? 0 : value;
     }
 
-    private int safeLongToInt(long value) {
-        return value > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) value;
-    }
-
-    private DailyUserStats getOrCreateTodayStats(User user, LocalDate today) {
-        return statsRepository.findByUserIdAndDate(user.getId(), today)
-                .orElseGet(() -> {
-                    DailyUserStats stats = new DailyUserStats();
-                    stats.setUser(user);
-                    stats.setDate(today);
-                    int streak = statsRepository.findTopByUserIdAndDateBeforeOrderByDateDesc(user.getId(), today)
-                            .filter(previous -> previous.getDate().equals(today.minusDays(1)) && previous.getReviewed() > 0)
-                            .map(previous -> previous.getStreakDays() + 1)
-                            .orElse(0);
-                    stats.setStreakDays(streak);
-                    return statsRepository.save(stats);
-                });
+    private int safeLongToInt(Long value) {
+        if (value == null) {
+            return 0;
+        }
+        return value > Integer.MAX_VALUE ? Integer.MAX_VALUE : value.intValue();
     }
 
     private DailyUserStats getOrCreateTodayStats(Long userId, LocalDate today) {
@@ -376,11 +437,16 @@ public class LearningService {
                 });
     }
 
-    private LeaderboardRowResponse toLeaderboardRow(User user, List<DailyUserStats> stats, LocalDate today) {
-        LeaderboardScore score = calculateLeaderboardScore(user, stats);
+    private LeaderboardRowResponse toLeaderboardRow(List<LeaderboardStatsView> stats) {
+        LeaderboardStatsView first = stats.get(0);
+        LeaderboardScore score = calculateLeaderboardScore(
+                first.getDailyNewLimit(),
+                first.getDailyReviewLimit(),
+                stats.stream().map(this::statsEntry).toList()
+        );
         return new LeaderboardRowResponse(
-                user.getId(),
-                user.getName(),
+                first.getUserId(),
+                first.getUserName(),
                 score.learned(),
                 score.reviewed(),
                 score.extraNew(),
@@ -391,7 +457,11 @@ public class LearningService {
         );
     }
 
-    private LeaderboardScore calculateLeaderboardScore(User user, List<DailyUserStats> stats) {
+    private LeaderboardScore calculateLeaderboardScore(
+            Integer dailyNewLimit,
+            Integer dailyReviewLimit,
+            List<StatsEntry> stats
+    ) {
         int learned = 0;
         int reviewed = 0;
         int correct = 0;
@@ -400,26 +470,28 @@ public class LearningService {
         int extraNew = 0;
         int extraReview = 0;
         int streakDays = 0;
+        int newGoal = nullToZero(dailyNewLimit);
+        int reviewGoal = nullToZero(dailyReviewLimit);
 
-        List<DailyUserStats> sortedStats = stats.stream()
-                .sorted(Comparator.comparing(DailyUserStats::getDate))
+        List<StatsEntry> sortedStats = stats.stream()
+                .sorted(Comparator.comparing(StatsEntry::date))
                 .toList();
-        for (DailyUserStats item : sortedStats) {
-            int dayLearned = nullToZero(item.getLearned());
-            int dayReviewed = nullToZero(item.getReviewed());
-            int dayExtraNew = Math.max(0, dayLearned - nullToZero(user.getDailyNewLimit()));
-            int dayExtraReview = Math.max(0, dayReviewed - nullToZero(user.getDailyReviewLimit()));
+        for (StatsEntry item : sortedStats) {
+            int dayLearned = nullToZero(item.learned());
+            int dayReviewed = nullToZero(item.reviewed());
+            int dayExtraNew = Math.max(0, dayLearned - newGoal);
+            int dayExtraReview = Math.max(0, dayReviewed - reviewGoal);
 
             learned += dayLearned;
             reviewed += dayReviewed;
-            correct += nullToZero(item.getCorrect());
+            correct += nullToZero(item.correct());
             extraNew += dayExtraNew;
             extraReview += dayExtraReview;
-            goalScore += Math.min(dayLearned, nullToZero(user.getDailyNewLimit())) * 10;
-            goalScore += Math.min(dayReviewed, nullToZero(user.getDailyReviewLimit())) * 4;
+            goalScore += Math.min(dayLearned, newGoal) * 10;
+            goalScore += Math.min(dayReviewed, reviewGoal) * 4;
             extraScore += Math.min(dayExtraNew, 10) * 3;
             extraScore += Math.min(dayExtraReview, 30);
-            streakDays = nullToZero(item.getStreakDays());
+            streakDays = nullToZero(item.streakDays());
         }
 
         int attempts = learned + reviewed;
@@ -439,16 +511,31 @@ public class LearningService {
         );
     }
 
+    private StatsEntry statsEntry(DailyUserStats stats) {
+        return new StatsEntry(
+                stats.getDate(),
+                stats.getReviewed(),
+                stats.getLearned(),
+                stats.getCorrect(),
+                stats.getStreakDays()
+        );
+    }
+
+    private StatsEntry statsEntry(LeaderboardStatsView stats) {
+        return new StatsEntry(
+                stats.getDate(),
+                stats.getReviewed(),
+                stats.getLearned(),
+                stats.getCorrect(),
+                stats.getStreakDays()
+        );
+    }
+
     private DailyUserStats emptyStats(Long userId, LocalDate date) {
         DailyUserStats stats = new DailyUserStats();
         stats.setUser(userRepository.getReferenceById(userId));
         stats.setDate(date);
         return stats;
-    }
-
-    private User findUser(Long userId) {
-        return userRepository.findById(userId)
-                .orElseThrow(() -> new NotFoundException("User not found"));
     }
 
     private record LeaderboardScore(
@@ -459,6 +546,15 @@ public class LearningService {
             int streakDays,
             int accuracy,
             int points
+    ) {
+    }
+
+    private record StatsEntry(
+            LocalDate date,
+            Integer reviewed,
+            Integer learned,
+            Integer correct,
+            Integer streakDays
     ) {
     }
 }

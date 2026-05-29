@@ -22,7 +22,10 @@ import lombok.Setter;
 @Entity
 @Table(
         name = "flashcards",
-        indexes = @Index(name = "idx_flashcards_deck", columnList = "deck_id")
+        indexes = {
+                @Index(name = "idx_flashcards_deck", columnList = "deck_id"),
+                @Index(name = "idx_flashcards_deck_id", columnList = "deck_id, id")
+        }
 )
 public class Flashcard {
 

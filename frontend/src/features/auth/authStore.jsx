@@ -24,10 +24,6 @@ const emptyDailyStats = () => ({
   streakDays: 0,
 })
 
-const isReviewDueToday = (progress) =>
-  progress?.status === 'REVIEW' &&
-  String(progress.nextReviewDate || progress.nextReviewAt || '').slice(0, 10) <= getTodayIso()
-
 const initialState = {
   user: null,
   decks: [],
@@ -44,6 +40,14 @@ const mergeDeck = (decks, deck) => [
   deck,
   ...decks.filter((item) => item.id !== deck.id),
 ]
+
+const mergeDecks = (currentDecks, nextDecks) => {
+  const nextDeckIds = new Set(nextDecks.map((deck) => deck.id))
+  return [
+    ...nextDecks,
+    ...currentDecks.filter((deck) => !nextDeckIds.has(deck.id)),
+  ]
+}
 
 const replaceDeckCards = (flashcards, deckId, cards) => [
   ...flashcards.filter((card) => card.deckId !== deckId),
@@ -69,11 +73,21 @@ const mergeRatedDeck = (decks, deck) => {
   return hasDeck ? mergedDecks : [deck, ...mergedDecks]
 }
 
+const mergeDailyStatsHistory = (history, dailyStats) => {
+  if (!dailyStats) {
+    return history
+  }
+  const hasDate = history.some((item) => item.date === dailyStats.date)
+  if (hasDate) {
+    return history.map((item) => (item.date === dailyStats.date ? dailyStats : item))
+  }
+  return [...history, dailyStats].slice(-7)
+}
+
 const loadSessionData = async (token) => {
   const [
     user,
     myDecks,
-    publicDeckPage,
     progress,
     dailyStats,
     dailyStatsHistory,
@@ -81,15 +95,13 @@ const loadSessionData = async (token) => {
   ] = await Promise.all([
     flashlexApi.me(token),
     flashlexApi.myDecks(token),
-    flashlexApi.publicDecks(),
     flashlexApi.progress(token),
     flashlexApi.dailyStats(token),
     flashlexApi.dailyStatsHistory(7, token),
     flashlexApi.leaderboard(),
   ])
 
-  const publicDecks = flashlexApi.unwrapPage(publicDeckPage)
-  const { decks, flashcards } = normalizeDeckCollection([...publicDecks, ...myDecks])
+  const { decks, flashcards } = normalizeDeckCollection(myDecks)
 
   return {
     user: normalizeUser(user),
@@ -270,6 +282,16 @@ export function FlashLexProvider({ children }) {
         }))
       },
 
+      async loadDeck(deckId) {
+        const { deck, cards } = normalizeDeckWithCards(await flashlexApi.deck(deckId))
+        setState((current) => ({
+          ...current,
+          decks: mergeDeck(current.decks, deck),
+          flashcards: replaceDeckCards(current.flashcards, deck.id, cards),
+        }))
+        return deck
+      },
+
       async cloneDeck(deckId) {
         const { deck, cards } = normalizeDeckWithCards(await flashlexApi.cloneDeck(deckId))
         setState((current) => ({
@@ -305,18 +327,15 @@ export function FlashLexProvider({ children }) {
       },
 
       async answerCard(cardId, quality) {
-        const updatedProgress = normalizeProgress(await flashlexApi.answerCard(cardId, quality))
+        const { progress: updatedProgress, dailyStats } = await flashlexApi.answerCard(cardId, quality)
         setState((current) => ({
           ...current,
           progress: [
             updatedProgress,
             ...current.progress.filter((item) => item.flashcardId !== updatedProgress.flashcardId),
           ],
-          dailyStats: updateDailyStatsAfterAnswer(
-            current.dailyStats,
-            current.progress.find((item) => item.flashcardId === updatedProgress.flashcardId),
-            quality,
-          ),
+          dailyStats: dailyStats || current.dailyStats,
+          dailyStatsHistory: mergeDailyStatsHistory(current.dailyStatsHistory, dailyStats),
         }))
 
         return updatedProgress
@@ -328,6 +347,24 @@ export function FlashLexProvider({ children }) {
           ...current,
           leaderboard: leaderboard.map(normalizeLeaderboardRow),
         }))
+      },
+
+      async loadPublicDecks(filters) {
+        const page = await flashlexApi.publicDecks(filters)
+        const decks = flashlexApi.unwrapPage(page).map(normalizeDeck)
+        setState((current) => ({
+          ...current,
+          decks: mergeDecks(current.decks, decks),
+        }))
+        return {
+          ...page,
+          decks,
+          flashcards: [],
+        }
+      },
+
+      async loadPublicDeckFacets() {
+        return flashlexApi.publicDeckFacets()
       },
 
       async getNextTrainingCard(
@@ -362,18 +399,4 @@ export function FlashLexProvider({ children }) {
   )
 
   return <FlashLexContext.Provider value={value}>{children}</FlashLexContext.Provider>
-}
-
-const updateDailyStatsAfterAnswer = (dailyStats, previousProgress, quality) => {
-  const wasNew = !previousProgress || previousProgress.status === 'NEW'
-  const wasReview = isReviewDueToday(previousProgress)
-  const counted = wasNew || wasReview
-  const correct = quality !== 'AGAIN_0' && counted
-
-  return {
-    ...dailyStats,
-    learned: (dailyStats.learned || 0) + (wasNew ? 1 : 0),
-    reviewed: (dailyStats.reviewed || 0) + (wasReview ? 1 : 0),
-    correct: (dailyStats.correct || 0) + (correct ? 1 : 0),
-  }
 }

@@ -118,6 +118,7 @@ export function DashboardPage() {
               deck={deck}
               flashcards={flashcards}
               key={deck.id}
+              canPublish={!user.publicationBanned}
               onClone={handleClone}
               onPublish={publishDeck}
             />

@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ru.isu.backend.dto.request.DeckRequest;
 import ru.isu.backend.dto.request.RatingRequest;
+import ru.isu.backend.dto.response.DeckCatalogFacetsResponse;
 import ru.isu.backend.dto.response.DeckResponse;
 import ru.isu.backend.security.UserPrincipal;
 import ru.isu.backend.service.DeckService;
@@ -55,13 +56,18 @@ public class DeckController {
         return deckService.searchPublishedDecks(query, level, tag, userId, pageable);
     }
 
+    @GetMapping("/public/facets")
+    public DeckCatalogFacetsResponse getPublishedFacets() {
+        return deckService.getPublishedFacets();
+    }
+
     @GetMapping("/{deckId}")
     public DeckResponse getDeck(
             @PathVariable @Positive Long deckId,
             @AuthenticationPrincipal UserPrincipal principal
     ) {
         Long userId = principal == null ? null : principal.getId();
-        return deckService.getDeck(deckId, userId);
+        return deckService.getDeck(deckId, userId, principal == null ? null : principal.getRole());
     }
 
     @PostMapping

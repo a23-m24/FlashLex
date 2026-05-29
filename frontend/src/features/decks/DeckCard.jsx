@@ -13,10 +13,20 @@ export function DeckCard({
   onClone,
   onPublish,
   ownedCloneId,
+  canPublish = true,
   showStudyAction = true,
 }) {
-  const cards = getDeckCards(flashcards, deck.id)
-  const phraseTypes = [...new Set(cards.map((card) => card.phraseType))].slice(0, 3)
+  const loadedCards = getDeckCards(flashcards, deck.id)
+  const metrics = deck.metrics || {}
+  const cards = loadedCards.length || !metrics.cardCount
+    ? loadedCards
+    : Array.from({ length: metrics.cardCount })
+  const phraseTypes = loadedCards.length
+    ? [...new Set(loadedCards.map((card) => card.phraseType))].slice(0, 3)
+    : Object.entries(metrics.phraseTypes || {})
+        .filter(([, count]) => count > 0)
+        .map(([type]) => type)
+        .slice(0, 3)
   const isOwner = deck.authorId === currentUserId
   const tags = deck.tags || []
   const isPrivateCatalogCopy = deck.sourceDeckId && !deck.isPublished
@@ -79,7 +89,7 @@ export function DeckCard({
             <LinkButton icon={Edit} to={`/decks/${deck.id}/edit`} variant="ghost">
               Изменить
             </LinkButton>
-            {!deck.isPublished ? (
+            {!deck.isPublished && canPublish ? (
               <Button onClick={() => onPublish(deck.id)} variant="ghost">
                 Опубликовать
               </Button>

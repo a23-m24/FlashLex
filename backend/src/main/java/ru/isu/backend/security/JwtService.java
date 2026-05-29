@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import ru.isu.backend.model.UserRole;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -33,12 +34,16 @@ public class JwtService {
         this.expirationSeconds = expirationSeconds;
     }
 
-    public String generateToken(Long userId, String email) {
+    public record JwtSubject(Long userId, String email, UserRole role) {
+    }
+
+    public String generateToken(Long userId, String email, UserRole role) {
         long now = Instant.now().getEpochSecond();
         Map<String, Object> header = Map.of("alg", "HS256", "typ", "JWT");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sub", email);
         payload.put("uid", userId);
+        payload.put("role", role == null ? UserRole.STUDENT.name() : role.name());
         payload.put("iat", now);
         payload.put("exp", now + expirationSeconds);
 
@@ -46,30 +51,17 @@ public class JwtService {
         return unsigned + "." + sign(unsigned);
     }
 
-    public String extractEmail(String token) {
-        Map<String, Object> payload = verifyAndReadPayload(token);
-        return (String) payload.get("sub");
-    }
-
-    public Long extractUserId(String token) {
+    public JwtSubject readSubject(String token) {
         Map<String, Object> payload = verifyAndReadPayload(token);
         Object value = payload.get("uid");
+        Long userId = null;
         if (value instanceof Number number) {
-            return number.longValue();
+            userId = number.longValue();
         }
         if (value instanceof String text && !text.isBlank()) {
-            return Long.valueOf(text);
+            userId = Long.valueOf(text);
         }
-        return null;
-    }
-
-    public boolean isValid(String token) {
-        try {
-            verifyAndReadPayload(token);
-            return true;
-        } catch (RuntimeException exception) {
-            return false;
-        }
+        return new JwtSubject(userId, (String) payload.get("sub"), extractRole(payload.get("role")));
     }
 
     private Map<String, Object> verifyAndReadPayload(String token) {
@@ -89,6 +81,17 @@ public class JwtService {
             throw new IllegalArgumentException("JWT expired");
         }
         return payload;
+    }
+
+    private UserRole extractRole(Object value) {
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return UserRole.valueOf(text);
+            } catch (IllegalArgumentException ignored) {
+                return UserRole.STUDENT;
+            }
+        }
+        return UserRole.STUDENT;
     }
 
     private String encodeJson(Map<String, Object> value) {

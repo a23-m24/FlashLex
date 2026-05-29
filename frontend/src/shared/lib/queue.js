@@ -4,6 +4,9 @@ export const isLearningStatus = (status) => status === 'LEARNING' || status === 
 
 export const isReviewStatus = (status) => status === 'REVIEW' || status === 'GRADUATED'
 
+export const isLearningDue = (progress) =>
+  isLearningStatus(progress?.status) && isDue(progress.nextReviewAt || progress.nextReviewDate)
+
 export const groupCardsByDeck = (flashcards) =>
   flashcards.reduce((groupedCards, card) => {
     const cards = groupedCards.get(card.deckId) || []
@@ -22,7 +25,7 @@ export const getDeckQueue = (deckId, cardsByDeckId, progressByCardId) => {
       const cardProgress = progressByCardId.get(card.id)
       if (!cardProgress || cardProgress.status === 'NEW') {
         counts.newCount += 1
-      } else if (isLearningStatus(cardProgress.status)) {
+      } else if (isLearningDue(cardProgress)) {
         counts.learningCount += 1
       } else if (
         isReviewStatus(cardProgress.status) &&

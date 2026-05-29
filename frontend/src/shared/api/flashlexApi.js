@@ -17,6 +17,23 @@ const phraseTypeFromApi = {
   PHRASE: 'phrase',
 }
 
+const normalizeMetricMap = (values = {}, keyMap = {}) =>
+  Object.fromEntries(
+    Object.entries(values || {}).map(([key, value]) => [
+      keyMap[key] || String(key).toLowerCase(),
+      value || 0,
+    ]),
+  )
+
+const normalizeMetrics = (metrics) =>
+  metrics
+    ? {
+        cardCount: metrics.cardCount || 0,
+        phraseTypes: normalizeMetricMap(metrics.phraseTypes, phraseTypeFromApi),
+        difficulties: normalizeMetricMap(metrics.difficulties),
+      }
+    : null
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message)
@@ -44,6 +61,15 @@ const toId = (value) => String(value)
 const toOptionalId = (value) => (value === null || value === undefined ? null : String(value))
 
 const unwrapPage = (response) => response?.content || response || []
+
+const normalizePage = (response, content = unwrapPage(response)) => ({
+  ...response,
+  content,
+  number: response?.number ?? response?.page?.number ?? 0,
+  size: response?.size ?? response?.page?.size ?? content.length,
+  totalElements: response?.totalElements ?? response?.page?.totalElements ?? content.length,
+  totalPages: response?.totalPages ?? response?.page?.totalPages ?? 1,
+})
 
 const parseErrorMessage = (payload, fallback) => {
   if (!payload) return fallback
@@ -96,8 +122,10 @@ export const normalizeUser = (user) => ({
   id: toId(user.id),
   name: user.name,
   email: user.email,
+  role: String(user.role || 'STUDENT').toLowerCase(),
   dailyNewLimit: user.dailyNewLimit,
   dailyReviewLimit: user.dailyReviewLimit,
+  publicationBanned: Boolean(user.publicationBanned),
   registeredAt: toDate(user.registeredAt),
 })
 
@@ -131,7 +159,7 @@ export const normalizeDeck = (deck) => ({
   canRate: Boolean(deck.canRate),
   clones: deck.clonesCount || 0,
   createdAt: toDate(deck.createdAt),
-  metrics: deck.metrics || null,
+  metrics: normalizeMetrics(deck.metrics),
 })
 
 export const normalizeProgress = (progress) => ({
@@ -230,6 +258,86 @@ const toDeckRequest = (payload) => ({
   })),
 })
 
+const publicDeckSort = {
+  rating: 'rating,desc',
+  popular: 'clonesCount,desc',
+  created: 'createdAt,desc',
+  name: 'name,asc',
+}
+
+const toPublicDecksQuery = ({
+  query = '',
+  tag = '',
+  level = '',
+  page = 0,
+  size = 12,
+  sort = 'rating',
+} = {}) => {
+  const params = new URLSearchParams()
+  params.set('page', String(Math.max(0, Number(page || 0))))
+  params.set('size', String(Math.max(1, Number(size || 12))))
+  params.set('sort', publicDeckSort[sort] || sort)
+
+  if (query.trim()) params.set('query', query.trim())
+  if (tag) params.set('tag', tag)
+  if (level) params.set('level', level)
+
+  return params.toString()
+}
+
+const toPageQuery = ({
+  query = '',
+  page = 0,
+  size = 10,
+  sort = 'createdAt,desc',
+  published,
+} = {}) => {
+  const params = new URLSearchParams()
+  params.set('page', String(Math.max(0, Number(page || 0))))
+  params.set('size', String(Math.max(1, Number(size || 10))))
+  params.set('sort', sort)
+
+  if (query.trim()) params.set('query', query.trim())
+  if (published !== undefined && published !== '') params.set('published', String(published))
+
+  return params.toString()
+}
+
+const mapPage = (page, normalize) => normalizePage(page, unwrapPage(page).map(normalize))
+
+const normalizeAdminUser = (user) => ({
+  id: toId(user.id),
+  name: user.name,
+  email: user.email,
+  role: String(user.role || 'STUDENT').toLowerCase(),
+  dailyNewLimit: user.dailyNewLimit,
+  dailyReviewLimit: user.dailyReviewLimit,
+  publicationBanned: Boolean(user.publicationBanned),
+  registeredAt: toDate(user.registeredAt),
+  deckCount: user.deckCount || 0,
+  publishedDeckCount: user.publishedDeckCount || 0,
+  progressCount: user.progressCount || 0,
+  todayPoints: user.todayPoints || 0,
+  weekPoints: user.weekPoints || 0,
+})
+
+const normalizeAdminDeck = (deck) => ({
+  id: toId(deck.id),
+  name: deck.name,
+  description: deck.description,
+  authorId: toId(deck.authorId),
+  authorName: deck.authorName,
+  authorEmail: deck.authorEmail,
+  isPublished: Boolean(deck.published),
+  level: deck.level,
+  tags: deck.tags || [],
+  cardCount: deck.cardCount || 0,
+  rating: deck.rating || 0,
+  ratingsCount: deck.ratingsCount || 0,
+  clonesCount: deck.clonesCount || 0,
+  createdAt: toDate(deck.createdAt),
+})
+
 export const flashlexApi = {
   login: (email, password) =>
     request('/auth/login', {
@@ -253,7 +361,33 @@ export const flashlexApi = {
 
   me: (token) => request('/users/me', { token }),
   myDecks: (token) => request('/decks/my', { token }),
-  publicDecks: () => request('/decks/public?size=100'),
+  deck: (deckId) => request(`/decks/${deckId}`),
+  publicDecks: (filters) => request(`/decks/public?${toPublicDecksQuery(filters)}`).then(normalizePage),
+  publicDeckFacets: () => request('/decks/public/facets'),
+  adminDashboard: () => request('/admin/dashboard'),
+  adminUsers: (filters) =>
+    request(`/admin/users?${toPageQuery({ sort: 'registeredAt,desc', ...filters })}`)
+      .then((page) => mapPage(page, normalizeAdminUser)),
+  adminDecks: (filters) =>
+    request(`/admin/decks?${toPageQuery({ sort: 'createdAt,desc', ...filters })}`)
+      .then((page) => mapPage(page, normalizeAdminDeck)),
+  adminSetPublicationBan: (userId, publicationBanned) =>
+    request(`/admin/users/${userId}/publication-ban`, {
+      method: 'PATCH',
+      body: { publicationBanned: Boolean(publicationBanned) },
+    }).then(normalizeAdminUser),
+  adminUpdateDeck: (deckId, payload) =>
+    request(`/admin/decks/${deckId}`, {
+      method: 'PUT',
+      body: {
+        ...toDeckRequest(payload),
+        published: true,
+      },
+    }),
+  adminDeleteDeck: (deckId) =>
+    request(`/admin/decks/${deckId}`, {
+      method: 'DELETE',
+    }),
   progress: (token) => request('/progress', { token }),
   dailyStats: (token) => request('/stats/daily', { token }),
   dailyStatsHistory: (days = 7, token = getStoredToken()) =>
@@ -312,7 +446,10 @@ export const flashlexApi = {
     request('/progress/answers', {
       method: 'POST',
       body: { flashcardId: Number(flashcardId), quality },
-    }),
+    }).then((response) => ({
+      progress: normalizeProgress(response.progress || response),
+      dailyStats: response.dailyStats ? normalizeDailyStats(response.dailyStats) : null,
+    })),
 
   updateProfile: (profile) =>
     request('/users/me', {

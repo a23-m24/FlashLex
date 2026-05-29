@@ -28,7 +28,13 @@ const isBlankDraftCard = (card) =>
   !card.transcription.trim() &&
   !card.exampleSentence.trim()
 
-export function DeckForm({ initialDeck, initialCards, onSubmit }) {
+export function DeckForm({
+  initialDeck,
+  initialCards,
+  onSubmit,
+  publicationDisabled = false,
+  publicationHint = '',
+}) {
   const [form, setForm] = useState(() => ({
     name: initialDeck?.name || '',
     description: initialDeck?.description || '',
@@ -181,12 +187,15 @@ export function DeckForm({ initialDeck, initialCards, onSubmit }) {
           <label className="switch">
             <input
               checked={form.isPublished}
+              disabled={publicationDisabled}
               onChange={(event) => update('isPublished', event.target.checked)}
               type="checkbox"
             />
             <span>Публичный набор</span>
           </label>
         </div>
+
+        {publicationHint ? <p className="field__error">{publicationHint}</p> : null}
 
         <div className="form-grid">
           <Input
